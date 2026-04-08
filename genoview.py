@@ -16,6 +16,7 @@ from CharacterModel import (
     GetModelBindPoseAsNumpyArrays,
     UpdateModelPoseFromNumpyArrays,
 )
+from ContactModule import BuildContactData
 from RootModule import (
     ROOT_JOINT_INDEX,
     DEFAULT_BVH_FRAME_TIME,
@@ -34,6 +35,7 @@ from DebugDraw import (
     DrawSkeleton,
     OffsetPositions,
     DrawPoseReconstructionError,
+    DrawContactStates,
     DrawRootTrajectoryDebug,
 )
 from Utils import PlaybackController
@@ -396,6 +398,11 @@ if __name__ == "__main__":
         bvhFrameTime,
         rootTrajectorySource=rootTrajectorySource3D,
     )
+    contactData = BuildContactData(
+        globalPositions,
+        poseSource3D["global_velocities"],
+        bvhAnimation.raw_data["names"],
+    )
     
     animationFrame = 0
     
@@ -436,6 +443,7 @@ if __name__ == "__main__":
     drawRootTrajectoryPtr = ffi.new('bool*'); drawRootTrajectoryPtr[0] = True
     drawTrajectoryDirectionsPtr = ffi.new('bool*'); drawTrajectoryDirectionsPtr[0] = True
     drawTrajectoryVelocityPtr = ffi.new('bool*'); drawTrajectoryVelocityPtr[0] = True
+    drawContactsPtr = ffi.new('bool*'); drawContactsPtr[0] = True
     drawReconstructedPosePtr = ffi.new('bool*'); drawReconstructedPosePtr[0] = True
     drawPoseModelLocalPtr = ffi.new('bool*'); drawPoseModelLocalPtr[0] = False
     drawReconstructionErrorPtr = ffi.new('bool*'); drawReconstructionErrorPtr[0] = True
@@ -491,6 +499,14 @@ if __name__ == "__main__":
         posePositionErrorMean, posePositionErrorMax = ComputePosePositionError(
             globalPositions[animationFrame],
             reconstructedPoseWorld["world_positions"],
+        )
+        frameContacts = contactData["contacts_filtered"][animationFrame]
+        contactIndices = contactData["joint_indices"]
+        bvhContactPositions = contactData["positions"][animationFrame]
+        poseContactPositions = (
+            OffsetPositions(localPose["local_positions"][contactIndices], localDebugOrigin)
+            if drawPoseModelLocalPtr[0] else
+            reconstructedPoseWorld["world_positions"][contactIndices]
         )
         poseFocusPosition = (
             OffsetPositions(localPose["local_positions"], localDebugOrigin)[ROOT_JOINT_INDEX]
@@ -756,6 +772,22 @@ if __name__ == "__main__":
                     drawVelocity=drawTrajectoryVelocityPtr[0],
                 )
 
+        if drawContactsPtr[0]:
+            DrawContactStates(
+                bvhContactPositions,
+                frameContacts,
+                activeColor=LIGHTGRAY,
+                inactiveColor=Color(200, 200, 200, 64),
+            )
+
+            if drawReconstructedPosePtr[0]:
+                DrawContactStates(
+                    poseContactPositions,
+                    frameContacts,
+                    activeColor=poseModelColor,
+                    inactiveColor=Color(poseModelColor.r, poseModelColor.g, poseModelColor.b, 64),
+                )
+
         if drawReconstructionErrorPtr[0]:
             DrawPoseReconstructionError(
                 globalPositions[animationFrame],
@@ -805,11 +837,12 @@ if __name__ == "__main__":
         GuiLabel(Rectangle(screenWidth - 250, 70, 220, 20), b"Project To Ground: True")
         GuiCheckBox(Rectangle(screenWidth - 250, 95, 20, 20), b"Draw Directions", drawTrajectoryDirectionsPtr)
         GuiCheckBox(Rectangle(screenWidth - 250, 120, 20, 20), b"Draw Velocity", drawTrajectoryVelocityPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 145, 20, 20), b"Draw Blue Geno", drawReconstructedPosePtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 170, 20, 20), b"Blue Geno Local", drawPoseModelLocalPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 195, 20, 20), b"Draw Reconstruction Error", drawReconstructionErrorPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 220, 20, 20), b"Integrate Root Motion", integrateRootMotionPtr)
-        GuiLabel(Rectangle(screenWidth - 250, 245, 220, 20), b"Pose Err: mean %.6f max %.6f" % (
+        GuiCheckBox(Rectangle(screenWidth - 250, 145, 20, 20), b"Draw Contacts", drawContactsPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 170, 20, 20), b"Draw Blue Geno", drawReconstructedPosePtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 195, 20, 20), b"Blue Geno Local", drawPoseModelLocalPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 220, 20, 20), b"Draw Reconstruction Error", drawReconstructionErrorPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 245, 20, 20), b"Integrate Root Motion", integrateRootMotionPtr)
+        GuiLabel(Rectangle(screenWidth - 250, 265, 220, 20), b"Pose Err: mean %.6f max %.6f" % (
             posePositionErrorMean,
             posePositionErrorMax))
 

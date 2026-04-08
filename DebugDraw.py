@@ -1,6 +1,6 @@
 import numpy as np
 
-from pyray import Vector3, Vector4
+from pyray import Color, Vector3, Vector4
 from raylib import *
 
 
@@ -53,6 +53,48 @@ def DrawPoseReconstructionError(originalPositions, reconstructedPositions, color
             Vector3(*originalPositions[i]),
             Vector3(*reconstructedPositions[i]),
             color)
+
+
+def DrawContactStates(
+    contactPositions,
+    contacts,
+    activeColor=GREEN,
+    inactiveColor=Color(0, 0, 0, 64),
+    activeSize=0.05,
+    inactiveSize=0.03,
+    drawInactive=True):
+
+    for i in range(len(contactPositions)):
+        isActive = bool(contacts[i])
+        if isActive or drawInactive:
+            DrawSphere(
+                Vector3(*contactPositions[i]),
+                activeSize if isActive else inactiveSize,
+                activeColor if isActive else inactiveColor)
+
+
+def DrawContactDataFrame(
+    contactData,
+    frameIndex,
+    filtered=True,
+    activeColor=GREEN,
+    inactiveColor=Color(0, 0, 0, 64),
+    activeSize=0.05,
+    inactiveSize=0.03,
+    drawInactive=True):
+
+    contactPositions = contactData["positions"][frameIndex]
+    contacts = contactData["contacts_filtered" if filtered else "contacts_raw"][frameIndex]
+
+    DrawContactStates(
+        contactPositions,
+        contacts,
+        activeColor=activeColor,
+        inactiveColor=inactiveColor,
+        activeSize=activeSize,
+        inactiveSize=inactiveSize,
+        drawInactive=drawInactive,
+    )
 
 
 def GetTrajectoryDebugColor(sampleOffset):
