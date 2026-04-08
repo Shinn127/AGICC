@@ -21,10 +21,12 @@ from RootModule import (
     ROOT_JOINT_INDEX,
     DEFAULT_BVH_FRAME_TIME,
     GetRootTrajectorySampleOffsets,
-    BuildSmoothedRootTrajectorySource,
+    BuildRootTrajectorySource,
     BuildRootLocalTrajectory,
     BuildRootTrajectoryDisplay,
 )
+from TerrainModule import BuildTerrainProviderFromContactData
+from TerrainMesh import LoadTerrainModelFromProvider
 from PoseModule import (
     BuildPoseSource,
     BuildLocalPose,
@@ -36,6 +38,8 @@ from DebugDraw import (
     OffsetPositions,
     DrawPoseReconstructionError,
     DrawContactStates,
+    DrawTerrainSamples,
+    DrawTerrainNormals,
     DrawRootTrajectoryDebug,
 )
 from Utils import PlaybackController
@@ -363,46 +367,56 @@ if __name__ == "__main__":
     
     # bvhAnimation = BVHImporter.load(resource_path("ground1_subject1.bvh"), scale=0.01)
     # bvhAnimation = BVHImporter.load(resource_path("Geno_bind.bvh"), scale=0.01)
-    bvhAnimation = BVHImporter.load(resource_path("walk1_subject5.bvh"), scale=0.01)
+    bvhAnimation = BVHImporter.load(resource_path("bvh/lafan1/obstacles6_subject5.bvh"), scale=0.01)
 
     parents = bvhAnimation.parents
     globalRotations = bvhAnimation.global_rotations
     globalPositions = bvhAnimation.global_positions
     trajectorySampleOffsets = GetRootTrajectorySampleOffsets()
     bvhFrameTime = DEFAULT_BVH_FRAME_TIME
-    rootTrajectorySourceProjected = BuildSmoothedRootTrajectorySource(
+    basePoseSource = BuildPoseSource(
         globalPositions,
         globalRotations,
         bvhFrameTime,
-        rootIndex=ROOT_JOINT_INDEX,
-        projectToGround=True,
-        groundHeight=groundPosition.y,
     )
-    rootTrajectorySource3D = BuildSmoothedRootTrajectorySource(
+    bootstrapContactData = BuildContactData(
         globalPositions,
-        globalRotations,
-        bvhFrameTime,
-        rootIndex=ROOT_JOINT_INDEX,
-        projectToGround=True,
-        groundHeight=groundPosition.y,
+        basePoseSource["global_velocities"],
+        bvhAnimation.raw_data["names"],
+        bootstrap=True,
     )
-    poseSourceProjected = BuildPoseSource(
-        globalPositions,
-        globalRotations,
-        bvhFrameTime,
-        rootTrajectorySource=rootTrajectorySourceProjected,
-    )
-    poseSource3D = BuildPoseSource(
-        globalPositions,
-        globalRotations,
-        bvhFrameTime,
-        rootTrajectorySource=rootTrajectorySource3D,
+    terrainProvider = BuildTerrainProviderFromContactData(
+        bootstrapContactData,
+        filtered=True,
+        fallbackHeight=groundPosition.y,
     )
     contactData = BuildContactData(
         globalPositions,
-        poseSource3D["global_velocities"],
+        basePoseSource["global_velocities"],
         bvhAnimation.raw_data["names"],
+        terrainProvider=terrainProvider,
     )
+    terrainModel, terrainHeightGrid = LoadTerrainModelFromProvider(
+        terrainProvider,
+        terrainProvider.sample_positions,
+        cellSize=0.1,
+        padding=0.5,
+    )
+    rootTrajectorySource = BuildRootTrajectorySource(
+        globalPositions,
+        globalRotations,
+        bvhFrameTime,
+        rootIndex=ROOT_JOINT_INDEX,
+        terrainProvider=terrainProvider,
+        alignPositionsToTerrain=False,
+    )
+    poseSource = BuildPoseSource(
+        globalPositions,
+        globalRotations,
+        bvhFrameTime,
+        rootTrajectorySource=rootTrajectorySource,
+    )
+    terrainSampleNormals = terrainProvider.sample_normals(terrainProvider.sample_positions)
     
     animationFrame = 0
     
@@ -440,10 +454,15 @@ if __name__ == "__main__":
     # UI
     
     drawBoneTransformsPtr = ffi.new('bool*'); drawBoneTransformsPtr[0] = False
+    drawFlatGroundPtr = ffi.new('bool*'); drawFlatGroundPtr[0] = False
+    drawTerrainMeshPtr = ffi.new('bool*'); drawTerrainMeshPtr[0] = True
     drawRootTrajectoryPtr = ffi.new('bool*'); drawRootTrajectoryPtr[0] = True
     drawTrajectoryDirectionsPtr = ffi.new('bool*'); drawTrajectoryDirectionsPtr[0] = True
     drawTrajectoryVelocityPtr = ffi.new('bool*'); drawTrajectoryVelocityPtr[0] = True
     drawContactsPtr = ffi.new('bool*'); drawContactsPtr[0] = True
+    drawBootstrapContactsPtr = ffi.new('bool*'); drawBootstrapContactsPtr[0] = False
+    drawTerrainSamplesPtr = ffi.new('bool*'); drawTerrainSamplesPtr[0] = False
+    drawTerrainNormalsPtr = ffi.new('bool*'); drawTerrainNormalsPtr[0] = False
     drawReconstructedPosePtr = ffi.new('bool*'); drawReconstructedPosePtr[0] = True
     drawPoseModelLocalPtr = ffi.new('bool*'); drawPoseModelLocalPtr[0] = False
     drawReconstructionErrorPtr = ffi.new('bool*'); drawReconstructionErrorPtr[0] = True
@@ -462,9 +481,6 @@ if __name__ == "__main__":
         UpdateModelPoseFromNumpyArrays(
             genoModel, bindPos, bindRot, 
             globalPositions[animationFrame], globalRotations[animationFrame])
-
-        rootTrajectorySource = rootTrajectorySource3D
-        poseSource = poseSource3D
         rootTrajectory = BuildRootLocalTrajectory(
             rootTrajectorySource,
             animationFrame,
@@ -473,8 +489,10 @@ if __name__ == "__main__":
         rootTrajectoryDisplay = BuildRootTrajectoryDisplay(
             rootTrajectory,
             groundHeight=groundPosition.y,
-            projectToGround=True,
+            projectToGround=False,
             heightOffset=0.02,
+            terrainProvider=terrainProvider,
+            projectToTerrain=True,
         )
         localPose = BuildLocalPose(
             poseSource,
@@ -487,6 +505,13 @@ if __name__ == "__main__":
             integrateRootMotion=integrateRootMotionPtr[0],
             dt=bvhFrameTime,
         )
+        poseComparisonFrame = (
+            min(animationFrame + 1, bvhAnimation.frame_count - 1)
+            if integrateRootMotionPtr[0] else
+            animationFrame
+        )
+        poseComparisonPositions = globalPositions[poseComparisonFrame]
+        poseErrorLabel = b"Pred Err(+1)" if integrateRootMotionPtr[0] else b"Recon Err"
         if drawPoseModelLocalPtr[0]:
             UpdateModelPoseFromNumpyArrays(
                 poseModel, bindPos, bindRot,
@@ -497,8 +522,16 @@ if __name__ == "__main__":
                 poseModel, bindPos, bindRot,
                 reconstructedPoseWorld["world_positions"], reconstructedPoseWorld["world_rotations"])
         posePositionErrorMean, posePositionErrorMax = ComputePosePositionError(
-            globalPositions[animationFrame],
+            poseComparisonPositions,
             reconstructedPoseWorld["world_positions"],
+        )
+        bootstrapFrameContacts = bootstrapContactData["contacts_filtered"][animationFrame]
+        bootstrapContactIndices = bootstrapContactData["joint_indices"]
+        bootstrapBvhContactPositions = bootstrapContactData["positions"][animationFrame]
+        bootstrapPoseContactPositions = (
+            OffsetPositions(localPose["local_positions"][bootstrapContactIndices], localDebugOrigin)
+            if drawPoseModelLocalPtr[0] else
+            reconstructedPoseWorld["world_positions"][bootstrapContactIndices]
         )
         frameContacts = contactData["contacts_filtered"][animationFrame]
         contactIndices = contactData["joint_indices"]
@@ -513,6 +546,9 @@ if __name__ == "__main__":
             if drawPoseModelLocalPtr[0] else
             reconstructedPoseWorld["world_positions"][ROOT_JOINT_INDEX]
         )
+        terrainQueryPosition = reconstructedPoseWorld["world_positions"][ROOT_JOINT_INDEX]
+        terrainHeightAtFocus = terrainProvider.sample_height(terrainQueryPosition)
+        terrainNormalAtFocus = rootTrajectorySource["terrain_normals"][animationFrame]
 
         # Shadow Light Tracks Character
         
@@ -554,8 +590,13 @@ if __name__ == "__main__":
         SetShaderValue(skinnedShadowShader, skinnedShadowShaderLightClipNear, lightClipNearPtr, SHADER_UNIFORM_FLOAT)
         SetShaderValue(skinnedShadowShader, skinnedShadowShaderLightClipFar, lightClipFarPtr, SHADER_UNIFORM_FLOAT)
         
-        groundModel.materials[0].shader = shadowShader
-        DrawModel(groundModel, groundPosition, 1.0, WHITE)
+        if drawFlatGroundPtr[0]:
+            groundModel.materials[0].shader = shadowShader
+            DrawModel(groundModel, groundPosition, 1.0, WHITE)
+
+        if drawTerrainMeshPtr[0]:
+            terrainModel.materials[0].shader = shadowShader
+            DrawModel(terrainModel, Vector3Zero(), 1.0, WHITE)
         
         genoModel.materials[0].shader = skinnedShadowShader
         DrawModel(genoModel, genoPosition, 1.0, WHITE)
@@ -593,8 +634,13 @@ if __name__ == "__main__":
         SetShaderValue(skinnedBasicShader, skinnedBasicShaderCamClipNear, camClipNearPtr, SHADER_UNIFORM_FLOAT)
         SetShaderValue(skinnedBasicShader, skinnedBasicShaderCamClipFar, camClipFarPtr, SHADER_UNIFORM_FLOAT)        
         
-        groundModel.materials[0].shader = basicShader
-        DrawModel(groundModel, groundPosition, 1.0, Color(190, 190, 190, 255))
+        if drawFlatGroundPtr[0]:
+            groundModel.materials[0].shader = basicShader
+            DrawModel(groundModel, groundPosition, 1.0, Color(190, 190, 190, 255))
+
+        if drawTerrainMeshPtr[0]:
+            terrainModel.materials[0].shader = basicShader
+            DrawModel(terrainModel, Vector3Zero(), 1.0, Color(150, 175, 130, 255))
         
         genoModel.materials[0].shader = skinnedBasicShader
         DrawModel(genoModel, genoPosition, 1.0, Color(220, 220, 220, 255))
@@ -731,7 +777,7 @@ if __name__ == "__main__":
         # Debug Draw
         
         BeginMode3D(camera.cam3d)
-        
+
         if drawBoneTransformsPtr[0]:
             DrawSkeleton(
                 globalPositions[animationFrame], 
@@ -776,21 +822,46 @@ if __name__ == "__main__":
             DrawContactStates(
                 bvhContactPositions,
                 frameContacts,
-                activeColor=LIGHTGRAY,
-                inactiveColor=Color(200, 200, 200, 64),
             )
 
             if drawReconstructedPosePtr[0]:
                 DrawContactStates(
                     poseContactPositions,
                     frameContacts,
-                    activeColor=poseModelColor,
-                    inactiveColor=Color(poseModelColor.r, poseModelColor.g, poseModelColor.b, 64),
                 )
+
+        if drawBootstrapContactsPtr[0]:
+            DrawContactStates(
+                bootstrapBvhContactPositions,
+                bootstrapFrameContacts,
+                activeColor=Color(150, 110, 60, 255),
+                inactiveColor=Color(210, 190, 160, 255),
+                activeSize=0.04,
+                inactiveSize=0.04,
+            )
+
+            if drawReconstructedPosePtr[0]:
+                DrawContactStates(
+                    bootstrapPoseContactPositions,
+                    bootstrapFrameContacts,
+                    activeColor=Color(150, 110, 60, 255),
+                    inactiveColor=Color(210, 190, 160, 255),
+                    activeSize=0.04,
+                    inactiveSize=0.04,
+                )
+
+        if drawTerrainSamplesPtr[0]:
+            DrawTerrainSamples(terrainProvider.sample_positions)
+
+        if drawTerrainNormalsPtr[0]:
+            DrawTerrainNormals(
+                terrainProvider.sample_positions,
+                terrainSampleNormals,
+            )
 
         if drawReconstructionErrorPtr[0]:
             DrawPoseReconstructionError(
-                globalPositions[animationFrame],
+                poseComparisonPositions,
                 reconstructedPoseWorld["world_positions"],
                 MAGENTA)
   
@@ -830,19 +901,37 @@ if __name__ == "__main__":
         GuiLabel(Rectangle(30, 140, 150, 20), b"Altitude: %5.3f" % camera.altitude)
         GuiLabel(Rectangle(30, 160, 150, 20), b"Distance: %5.3f" % camera.distance)
   
-        GuiGroupBox(Rectangle(screenWidth - 260, 10, 240, 280), b"Rendering")
+        GuiGroupBox(Rectangle(screenWidth - 260, 10, 240, 500), b"Rendering")
 
         GuiCheckBox(Rectangle(screenWidth - 250, 20, 20, 20), b"Draw Transforms", drawBoneTransformsPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 45, 20, 20), b"Draw Root Trajectory", drawRootTrajectoryPtr)
-        GuiLabel(Rectangle(screenWidth - 250, 70, 220, 20), b"Project To Ground: True")
-        GuiCheckBox(Rectangle(screenWidth - 250, 95, 20, 20), b"Draw Directions", drawTrajectoryDirectionsPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 120, 20, 20), b"Draw Velocity", drawTrajectoryVelocityPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 145, 20, 20), b"Draw Contacts", drawContactsPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 170, 20, 20), b"Draw Blue Geno", drawReconstructedPosePtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 195, 20, 20), b"Blue Geno Local", drawPoseModelLocalPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 220, 20, 20), b"Draw Reconstruction Error", drawReconstructionErrorPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 245, 20, 20), b"Integrate Root Motion", integrateRootMotionPtr)
-        GuiLabel(Rectangle(screenWidth - 250, 265, 220, 20), b"Pose Err: mean %.6f max %.6f" % (
+        GuiCheckBox(Rectangle(screenWidth - 250, 45, 20, 20), b"Draw Flat Ground", drawFlatGroundPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 70, 20, 20), b"Draw Terrain Mesh", drawTerrainMeshPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 95, 20, 20), b"Draw Root Trajectory", drawRootTrajectoryPtr)
+        GuiLabel(Rectangle(screenWidth - 250, 120, 220, 20), b"Terrain-Aware Root/Pose: On")
+        GuiCheckBox(Rectangle(screenWidth - 250, 145, 20, 20), b"Draw Directions", drawTrajectoryDirectionsPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 170, 20, 20), b"Draw Velocity", drawTrajectoryVelocityPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 195, 20, 20), b"Draw Contacts", drawContactsPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 220, 20, 20), b"Draw Bootstrap Contacts", drawBootstrapContactsPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 245, 20, 20), b"Draw Terrain Samples", drawTerrainSamplesPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 270, 20, 20), b"Draw Terrain Normals", drawTerrainNormalsPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 295, 20, 20), b"Draw Blue Geno", drawReconstructedPosePtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 320, 20, 20), b"Blue Geno Local", drawPoseModelLocalPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 345, 20, 20), b"Draw Reconstruction Error", drawReconstructionErrorPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 370, 20, 20), b"Integrate Root Motion", integrateRootMotionPtr)
+        GuiLabel(Rectangle(screenWidth - 250, 390, 220, 20), b"Trajectory Projection: Terrain")
+        GuiLabel(Rectangle(screenWidth - 250, 410, 220, 20), b"Terrain Grid: %d x %d" % (
+            terrainHeightGrid["num_x"],
+            terrainHeightGrid["num_z"],
+        ))
+        GuiLabel(Rectangle(screenWidth - 250, 430, 220, 20), b"Terrain H: %.4f" % terrainHeightAtFocus)
+        GuiLabel(Rectangle(screenWidth - 250, 450, 220, 20), b"Terrain Samples: %d" % len(terrainProvider.sample_positions))
+        GuiLabel(Rectangle(screenWidth - 250, 470, 220, 20), b"Terrain N: [% .2f % .2f % .2f]" % (
+            terrainNormalAtFocus[0],
+            terrainNormalAtFocus[1],
+            terrainNormalAtFocus[2],
+        ))
+        GuiLabel(Rectangle(screenWidth - 250, 490, 220, 20), b"%s: mean %.6f max %.6f" % (
+            poseErrorLabel,
             posePositionErrorMean,
             posePositionErrorMax))
 
@@ -859,6 +948,7 @@ if __name__ == "__main__":
 
     UnloadShadowMap(shadowMap)
     
+    UnloadModel(terrainModel)
     UnloadModel(poseModel)
     UnloadModel(genoModel)
     UnloadModel(groundModel)

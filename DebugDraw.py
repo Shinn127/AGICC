@@ -58,18 +58,20 @@ def DrawPoseReconstructionError(originalPositions, reconstructedPositions, color
 def DrawContactStates(
     contactPositions,
     contacts,
-    activeColor=GREEN,
-    inactiveColor=Color(0, 0, 0, 64),
+    activeColor=Color(90, 90, 90, 255),
+    inactiveColor=Color(190, 190, 190, 255),
     activeSize=0.05,
-    inactiveSize=0.03,
+    inactiveSize=0.05,
     drawInactive=True):
 
     for i in range(len(contactPositions)):
         isActive = bool(contacts[i])
         if isActive or drawInactive:
-            DrawSphere(
+            DrawSphereWires(
                 Vector3(*contactPositions[i]),
                 activeSize if isActive else inactiveSize,
+                4,
+                10,
                 activeColor if isActive else inactiveColor)
 
 
@@ -77,10 +79,10 @@ def DrawContactDataFrame(
     contactData,
     frameIndex,
     filtered=True,
-    activeColor=GREEN,
-    inactiveColor=Color(0, 0, 0, 64),
+    activeColor=Color(90, 90, 90, 255),
+    inactiveColor=Color(190, 190, 190, 255),
     activeSize=0.05,
-    inactiveSize=0.03,
+    inactiveSize=0.05,
     drawInactive=True):
 
     contactPositions = contactData["positions"][frameIndex]
@@ -95,6 +97,38 @@ def DrawContactDataFrame(
         inactiveSize=inactiveSize,
         drawInactive=drawInactive,
     )
+
+
+def DrawTerrainSamples(
+    samplePositions,
+    color=Color(120, 160, 90, 255),
+    radius=0.03,
+    rings=4,
+    slices=8):
+
+    for position in np.asarray(samplePositions, dtype=np.float32):
+        DrawSphereWires(
+            Vector3(*position),
+            radius,
+            rings,
+            slices,
+            color)
+
+
+def DrawTerrainNormals(
+    samplePositions,
+    sampleNormals,
+    color=Color(70, 120, 70, 255),
+    scale=0.12):
+
+    for position, normal in zip(
+        np.asarray(samplePositions, dtype=np.float32),
+        np.asarray(sampleNormals, dtype=np.float32),
+    ):
+        DrawLine3D(
+            Vector3(*position),
+            Vector3(*(position + scale * normal)),
+            color)
 
 
 def GetTrajectoryDebugColor(sampleOffset):

@@ -10,11 +10,16 @@ except ImportError:
 
 ROOT_JOINT_INDEX = 0
 ROOT_FORWARD_AXIS = np.asarray([0.0, 0.0, 1.0], dtype=np.float32)
+ROOT_UP_AXIS = np.asarray([0.0, 1.0, 0.0], dtype=np.float32)
 DEFAULT_TRAJECTORY_SAMPLE_OFFSETS = np.arange(-60, 61, 10, dtype=np.int32)
 DEFAULT_BVH_FRAME_TIME = 1.0 / 60.0
 TRAJECTORY_POSITION_SMOOTH_WINDOW = 31
 TRAJECTORY_DIRECTION_SMOOTH_WINDOW = 61
 TRAJECTORY_SMOOTH_POLYORDER = 3
+MIN_TERRAIN_UP_DOT = 0.6
+MIN_TERRAIN_UP_CONTINUITY_DOT = 0.3
+TERRAIN_UP_SMOOTH_ALPHA = 0.15
+TERRAIN_FORWARD_SMOOTH_ALPHA = 0.3
 
 
 def GetRootTrajectorySampleOffsets(step=10, radius=60):
@@ -110,6 +115,97 @@ def ProjectTrajectoryToGround(vectors, groundHeight=0.0):
     return projected
 
 
+def ProjectVectorToPlane(vector, planeNormal, fallback=ROOT_FORWARD_AXIS):
+    vector = np.asarray(vector, dtype=np.float32)
+    planeNormal = NormalizeDirection(planeNormal, fallback=ROOT_UP_AXIS)
+    projected = vector - np.dot(vector, planeNormal) * planeNormal
+    projectedNorm = np.linalg.norm(projected)
+    if projectedNorm < 1e-8:
+        fallback = np.asarray(fallback, dtype=np.float32)
+        projected = fallback - np.dot(fallback, planeNormal) * planeNormal
+        projectedNorm = np.linalg.norm(projected)
+        if projectedNorm < 1e-8:
+            alternate = np.asarray([1.0, 0.0, 0.0], dtype=np.float32)
+            if abs(np.dot(alternate, planeNormal)) > 0.9:
+                alternate = np.asarray([0.0, 0.0, 1.0], dtype=np.float32)
+            projected = alternate - np.dot(alternate, planeNormal) * planeNormal
+            projectedNorm = np.linalg.norm(projected)
+    return (projected / max(projectedNorm, 1e-8)).astype(np.float32)
+
+
+def BuildRotationFromUpForward(upDirection, forwardDirection):
+    upDirection = NormalizeDirection(upDirection, fallback=ROOT_UP_AXIS)
+    forwardDirection = ProjectVectorToPlane(forwardDirection, upDirection, fallback=ROOT_FORWARD_AXIS)
+    rightDirection = np.cross(upDirection, forwardDirection).astype(np.float32)
+    rightDirection = NormalizeDirection(rightDirection, fallback=np.asarray([1.0, 0.0, 0.0], dtype=np.float32))
+    forwardDirection = NormalizeDirection(
+        np.cross(rightDirection, upDirection).astype(np.float32),
+        fallback=forwardDirection,
+    )
+    xform = np.stack([rightDirection, upDirection, forwardDirection], axis=-1).astype(np.float32)
+    return quat.normalize(quat.from_xform(xform)).astype(np.float32)
+
+
+def StabilizeTerrainFrameSeries(candidateUps, candidateForwards):
+    candidateUps = np.asarray(candidateUps, dtype=np.float32)
+    candidateForwards = np.asarray(candidateForwards, dtype=np.float32)
+
+    if len(candidateUps) == 0:
+        return (
+            np.zeros((0, 3), dtype=np.float32),
+            np.zeros((0, 3), dtype=np.float32),
+            np.zeros((0, 4), dtype=np.float32),
+        )
+
+    stableUps = np.zeros_like(candidateUps, dtype=np.float32)
+    stableForwards = np.zeros_like(candidateForwards, dtype=np.float32)
+    stableRotations = np.zeros((len(candidateUps), 4), dtype=np.float32)
+
+    previousUp = ROOT_UP_AXIS.copy()
+    previousForward = ROOT_FORWARD_AXIS.copy()
+
+    for i in range(len(candidateUps)):
+        upCandidate = NormalizeDirection(candidateUps[i], fallback=previousUp)
+        if (
+            upCandidate[1] < MIN_TERRAIN_UP_DOT or
+            np.dot(upCandidate, previousUp) < MIN_TERRAIN_UP_CONTINUITY_DOT
+        ):
+            upCandidate = previousUp.copy()
+
+        stableUp = NormalizeDirection(
+            (1.0 - TERRAIN_UP_SMOOTH_ALPHA) * previousUp +
+            TERRAIN_UP_SMOOTH_ALPHA * upCandidate,
+            fallback=previousUp,
+        )
+
+        forwardCandidate = ProjectVectorToPlane(
+            candidateForwards[i],
+            stableUp,
+            fallback=previousForward,
+        )
+        if np.dot(forwardCandidate, previousForward) < 0.0:
+            forwardCandidate = -forwardCandidate
+
+        stableForward = NormalizeDirection(
+            (1.0 - TERRAIN_FORWARD_SMOOTH_ALPHA) * previousForward +
+            TERRAIN_FORWARD_SMOOTH_ALPHA * forwardCandidate,
+            fallback=previousForward,
+        )
+
+        stableUps[i] = stableUp
+        stableForwards[i] = stableForward
+        stableRotations[i] = BuildRotationFromUpForward(stableUp, stableForward)
+
+        previousUp = stableUp
+        previousForward = stableForward
+
+    return (
+        stableUps.astype(np.float32),
+        stableForwards.astype(np.float32),
+        stableRotations.astype(np.float32),
+    )
+
+
 def ComputeRootWorldForwardSeries(globalRotations, rootIndex=ROOT_JOINT_INDEX):
     return quat.mul_vec(globalRotations[:, rootIndex], ROOT_FORWARD_AXIS).astype(np.float32)
 
@@ -180,6 +276,93 @@ def BuildSmoothedRootTrajectorySource(
         "directions": smoothedDirections.astype(np.float32),
         "rotations": smoothedRotations.astype(np.float32),
         "velocities": smoothedVelocities.astype(np.float32),
+    }
+
+
+def BuildRootTrajectorySource(
+    globalPositions,
+    globalRotations,
+    dt,
+    rootIndex=ROOT_JOINT_INDEX,
+    projectToGround=True,
+    groundHeight=0.0,
+    terrainProvider=None,
+    alignPositionsToTerrain=False):
+
+    if terrainProvider is not None:
+        return BuildTerrainAwareRootTrajectorySource(
+            globalPositions,
+            globalRotations,
+            terrainProvider,
+            dt,
+            rootIndex=rootIndex,
+            alignPositionsToTerrain=alignPositionsToTerrain,
+        )
+
+    return BuildSmoothedRootTrajectorySource(
+        globalPositions,
+        globalRotations,
+        dt,
+        rootIndex=rootIndex,
+        projectToGround=projectToGround,
+        groundHeight=groundHeight,
+    )
+
+
+def BuildTerrainAwareRootTrajectorySource(
+    globalPositions,
+    globalRotations,
+    terrainProvider,
+    dt,
+    rootIndex=ROOT_JOINT_INDEX,
+    alignPositionsToTerrain=False):
+
+    rootPositions = np.asarray(globalPositions[:, rootIndex], dtype=np.float32)
+    rootDirections = ComputeRootWorldForwardSeries(globalRotations, rootIndex=rootIndex)
+    terrainHeights = terrainProvider.sample_heights(rootPositions).astype(np.float32)
+    terrainNormals = NormalizeDirections(
+        terrainProvider.sample_normals(rootPositions).astype(np.float32),
+        fallback=ROOT_UP_AXIS,
+    )
+
+    terrainAlignedPositions = rootPositions.copy()
+    if alignPositionsToTerrain:
+        terrainAlignedPositions[:, 1] = terrainHeights
+
+    smoothedPositions = ApplySavgolFilter(
+        terrainAlignedPositions,
+        TRAJECTORY_POSITION_SMOOTH_WINDOW,
+        TRAJECTORY_SMOOTH_POLYORDER,
+    )
+    smoothedNormalCandidates = NormalizeDirections(
+        ApplySavgolFilter(
+            terrainNormals,
+            TRAJECTORY_DIRECTION_SMOOTH_WINDOW,
+            TRAJECTORY_SMOOTH_POLYORDER,
+        ),
+        fallback=ROOT_UP_AXIS,
+    )
+    smoothedForwardCandidates = NormalizeDirections(
+        ApplySavgolFilter(
+            rootDirections,
+            TRAJECTORY_DIRECTION_SMOOTH_WINDOW,
+            TRAJECTORY_SMOOTH_POLYORDER,
+        ),
+        fallback=ROOT_FORWARD_AXIS,
+    )
+    smoothedNormals, smoothedDirections, smoothedRotations = StabilizeTerrainFrameSeries(
+        smoothedNormalCandidates,
+        smoothedForwardCandidates,
+    )
+    smoothedVelocities = ComputeTrajectoryVelocities(smoothedPositions, dt)
+
+    return {
+        "positions": smoothedPositions.astype(np.float32),
+        "directions": smoothedDirections.astype(np.float32),
+        "rotations": smoothedRotations.astype(np.float32),
+        "velocities": smoothedVelocities.astype(np.float32),
+        "terrain_heights": terrainHeights.astype(np.float32),
+        "terrain_normals": smoothedNormals.astype(np.float32),
     }
 
 
@@ -280,11 +463,35 @@ def ApplyTrajectoryGroundProjection(
     }
 
 
+def ApplyTrajectoryTerrainProjection(
+    worldPositions,
+    worldDirections,
+    worldVelocities,
+    terrainProvider,
+    projectToTerrain=True,
+    heightOffset=0.01):
+
+    projectedPositions = np.asarray(worldPositions, dtype=np.float32).copy()
+    projectedDirections = np.asarray(worldDirections, dtype=np.float32).copy()
+    projectedVelocities = np.asarray(worldVelocities, dtype=np.float32).copy()
+
+    if projectToTerrain and terrainProvider is not None and len(projectedPositions) > 0:
+        projectedPositions[:, 1] = terrainProvider.sample_heights(projectedPositions) + heightOffset
+
+    return {
+        "world_positions": projectedPositions.astype(np.float32),
+        "world_directions": projectedDirections.astype(np.float32),
+        "world_velocities": projectedVelocities.astype(np.float32),
+    }
+
+
 def BuildRootTrajectoryDisplay(
     rootTrajectory,
     groundHeight=0.0,
     projectToGround=True,
-    heightOffset=0.01):
+    heightOffset=0.01,
+    terrainProvider=None,
+    projectToTerrain=False):
 
     rootTrajectoryWorld = ReconstructRootTrajectoryWorldSpace(
         rootTrajectory["local_positions"],
@@ -293,6 +500,16 @@ def BuildRootTrajectoryDisplay(
         rootTrajectory["current_root_position"],
         rootTrajectory["current_root_rotation"],
     )
+
+    if terrainProvider is not None and projectToTerrain:
+        return ApplyTrajectoryTerrainProjection(
+            rootTrajectoryWorld["world_positions"],
+            rootTrajectoryWorld["world_directions"],
+            rootTrajectoryWorld["world_velocities"],
+            terrainProvider,
+            projectToTerrain=projectToTerrain,
+            heightOffset=heightOffset,
+        )
 
     return ApplyTrajectoryGroundProjection(
         rootTrajectoryWorld["world_positions"],

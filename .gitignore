@@ -5,3 +5,5 @@
 *.mb
 *.codex
 *.vscode
+
+ref/

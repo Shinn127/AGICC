@@ -151,7 +151,10 @@ def between(x, y):
         
 def log(x, eps=1e-5):
     length = np.sqrt(np.sum(np.square(x[...,1:]), axis=-1))[...,np.newaxis]
-    halfangle = np.where(length < eps, np.ones_like(length), np.arctan2(length, x[...,0:1]) / length)
+    halfangle = np.ones_like(length)
+    valid = length >= eps
+    if np.any(valid):
+        halfangle[valid] = np.arctan2(length[valid], x[...,0:1][valid]) / length[valid]
     return halfangle * x[...,1:]
     
 def exp(x, eps=1e-5):
