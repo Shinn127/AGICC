@@ -131,6 +131,58 @@ def DrawTerrainNormals(
             color)
 
 
+def DrawBodyProxyFrame(
+    proxyPositions,
+    proxyRadii,
+    color=Color(120, 140, 180, 180),
+    rings=4,
+    slices=8):
+
+    for position, radius in zip(
+        np.asarray(proxyPositions, dtype=np.float32),
+        np.asarray(proxyRadii, dtype=np.float32),
+    ):
+        DrawSphereWires(
+            Vector3(*position),
+            float(radius),
+            rings,
+            slices,
+            color,
+        )
+
+
+def DrawTerrainPenetrationFrame(
+    bodyProxyPositions,
+    penetrationFrame,
+    pointColor=Color(200, 60, 60, 255),
+    lineColor=Color(220, 120, 80, 255),
+    pointRadius=0.02):
+
+    penetrationMask = penetrationFrame["penetration_mask"]
+    proxyPositions = np.asarray(bodyProxyPositions, dtype=np.float32)
+    terrainPoints = penetrationFrame["terrain_points"]
+    bottomPoints = penetrationFrame["bottom_points"]
+
+    for isPenetrating, proxyPosition, terrainPoint, bottomPoint in zip(
+        penetrationMask,
+        proxyPositions,
+        terrainPoints,
+        bottomPoints,
+    ):
+        if not isPenetrating:
+            continue
+        DrawSphere(
+            Vector3(*proxyPosition),
+            pointRadius,
+            pointColor,
+        )
+        DrawLine3D(
+            Vector3(*bottomPoint),
+            Vector3(*terrainPoint),
+            lineColor,
+        )
+
+
 def GetTrajectoryDebugColor(sampleOffset):
     if sampleOffset < 0:
         return SKYBLUE

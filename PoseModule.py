@@ -2,34 +2,11 @@ import numpy as np
 
 import quat
 from RootModule import DEFAULT_BVH_FRAME_TIME
+from Utils import ComputeFiniteDifferenceVelocities
 
 
 def ComputePoseVelocities(globalPositions, dt=DEFAULT_BVH_FRAME_TIME):
-    globalPositions = np.asarray(globalPositions, dtype=np.float32)
-    velocities = np.zeros_like(globalPositions, dtype=np.float32)
-
-    if len(globalPositions) == 0:
-        return velocities
-    if len(globalPositions) == 1:
-        return velocities
-    if len(globalPositions) == 2:
-        singleStepVelocity = ((globalPositions[1] - globalPositions[0]) / dt).astype(np.float32)
-        velocities[:] = singleStepVelocity
-        return velocities
-
-    velocities[1:-1] = (
-        0.5 * (globalPositions[2:] - globalPositions[1:-1]) / dt +
-        0.5 * (globalPositions[1:-1] - globalPositions[:-2]) / dt
-    ).astype(np.float32)
-
-    if len(globalPositions) >= 4:
-        velocities[0] = velocities[1] - (velocities[3] - velocities[2])
-        velocities[-1] = velocities[-2] + (velocities[-2] - velocities[-3])
-    else:
-        velocities[0] = velocities[1]
-        velocities[-1] = velocities[-2]
-
-    return velocities.astype(np.float32)
+    return ComputeFiniteDifferenceVelocities(globalPositions, dt)
 
 
 def ComputePoseAngularVelocities(globalRotations, dt=DEFAULT_BVH_FRAME_TIME):

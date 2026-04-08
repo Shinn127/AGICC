@@ -1,6 +1,6 @@
 from pyray import (
-    Vector2, Vector3, Vector4, Transform, Matrix, 
-    Color, Rectangle, Model, ModelAnimation, Mesh, BoneInfo, 
+    Vector2, Vector3,
+    Color, Rectangle,
     Texture, RenderTexture)
 from raylib import *
 from raylib.defines import *
@@ -16,6 +16,11 @@ from CharacterModel import (
     GetModelBindPoseAsNumpyArrays,
     UpdateModelPoseFromNumpyArrays,
 )
+from BodyProxyModule import (
+    BuildBodyProxyLayout,
+    BuildBodyProxyFrame,
+    ComputeTerrainPenetrationFrame,
+)
 from ContactModule import BuildContactData
 from RootModule import (
     ROOT_JOINT_INDEX,
@@ -25,8 +30,7 @@ from RootModule import (
     BuildRootLocalTrajectory,
     BuildRootTrajectoryDisplay,
 )
-from TerrainModule import BuildTerrainProviderFromContactData
-from TerrainMesh import LoadTerrainModelFromProvider
+from TerrainModule import BuildTerrainProviderFromContactData, LoadTerrainModelFromProvider
 from PoseModule import (
     BuildPoseSource,
     BuildLocalPose,
@@ -38,11 +42,13 @@ from DebugDraw import (
     OffsetPositions,
     DrawPoseReconstructionError,
     DrawContactStates,
+    DrawBodyProxyFrame,
+    DrawTerrainPenetrationFrame,
     DrawTerrainSamples,
     DrawTerrainNormals,
     DrawRootTrajectoryDebug,
 )
-from Utils import PlaybackController
+from PlaybackController import PlaybackController
 
 ffi = cffi.FFI()
 
@@ -274,8 +280,8 @@ if __name__ == "__main__":
     
     # Init Window
     
-    screenWidth = 1280
-    screenHeight = 720
+    screenWidth = 1920
+    screenHeight = 1080
     
     SetConfigFlags(FLAG_VSYNC_HINT)
     InitWindow(screenWidth, screenHeight, b"GenoViewPython")
@@ -396,6 +402,11 @@ if __name__ == "__main__":
         bvhAnimation.raw_data["names"],
         terrainProvider=terrainProvider,
     )
+    bodyProxyLayout = BuildBodyProxyLayout(
+        globalPositions[0],
+        parents,
+        bvhAnimation.raw_data["names"],
+    )
     terrainModel, terrainHeightGrid = LoadTerrainModelFromProvider(
         terrainProvider,
         terrainProvider.sample_positions,
@@ -463,6 +474,8 @@ if __name__ == "__main__":
     drawBootstrapContactsPtr = ffi.new('bool*'); drawBootstrapContactsPtr[0] = False
     drawTerrainSamplesPtr = ffi.new('bool*'); drawTerrainSamplesPtr[0] = False
     drawTerrainNormalsPtr = ffi.new('bool*'); drawTerrainNormalsPtr[0] = False
+    drawBodyProxyPtr = ffi.new('bool*'); drawBodyProxyPtr[0] = False
+    drawTerrainPenetrationPtr = ffi.new('bool*'); drawTerrainPenetrationPtr[0] = False
     drawReconstructedPosePtr = ffi.new('bool*'); drawReconstructedPosePtr[0] = True
     drawPoseModelLocalPtr = ffi.new('bool*'); drawPoseModelLocalPtr[0] = False
     drawReconstructionErrorPtr = ffi.new('bool*'); drawReconstructionErrorPtr[0] = True
@@ -549,6 +562,18 @@ if __name__ == "__main__":
         terrainQueryPosition = reconstructedPoseWorld["world_positions"][ROOT_JOINT_INDEX]
         terrainHeightAtFocus = terrainProvider.sample_height(terrainQueryPosition)
         terrainNormalAtFocus = rootTrajectorySource["terrain_normals"][animationFrame]
+        bodyProxyFrame = BuildBodyProxyFrame(
+            globalPositions[animationFrame],
+            bodyProxyLayout,
+        )
+        bodyProxyPositions = bodyProxyFrame["positions"]
+        bodyProxyRadii = bodyProxyFrame["radii"]
+        penetrationFrame = ComputeTerrainPenetrationFrame(
+            bodyProxyFrame,
+            terrainProvider,
+        )
+        penetrationCount = penetrationFrame["penetration_count"]
+        maxPenetrationDepth = penetrationFrame["max_penetration"]
 
         # Shadow Light Tracks Character
         
@@ -640,7 +665,7 @@ if __name__ == "__main__":
 
         if drawTerrainMeshPtr[0]:
             terrainModel.materials[0].shader = basicShader
-            DrawModel(terrainModel, Vector3Zero(), 1.0, Color(150, 175, 130, 255))
+            DrawModel(terrainModel, Vector3Zero(), 1.0, Color(190, 190, 190, 255))
         
         genoModel.materials[0].shader = skinnedBasicShader
         DrawModel(genoModel, genoPosition, 1.0, Color(220, 220, 220, 255))
@@ -859,6 +884,18 @@ if __name__ == "__main__":
                 terrainSampleNormals,
             )
 
+        if drawBodyProxyPtr[0]:
+            DrawBodyProxyFrame(
+                bodyProxyPositions,
+                bodyProxyRadii,
+            )
+
+        if drawTerrainPenetrationPtr[0]:
+            DrawTerrainPenetrationFrame(
+                bodyProxyPositions,
+                penetrationFrame,
+            )
+
         if drawReconstructionErrorPtr[0]:
             DrawPoseReconstructionError(
                 poseComparisonPositions,
@@ -901,7 +938,7 @@ if __name__ == "__main__":
         GuiLabel(Rectangle(30, 140, 150, 20), b"Altitude: %5.3f" % camera.altitude)
         GuiLabel(Rectangle(30, 160, 150, 20), b"Distance: %5.3f" % camera.distance)
   
-        GuiGroupBox(Rectangle(screenWidth - 260, 10, 240, 500), b"Rendering")
+        GuiGroupBox(Rectangle(screenWidth - 260, 10, 240, 580), b"Rendering")
 
         GuiCheckBox(Rectangle(screenWidth - 250, 20, 20, 20), b"Draw Transforms", drawBoneTransformsPtr)
         GuiCheckBox(Rectangle(screenWidth - 250, 45, 20, 20), b"Draw Flat Ground", drawFlatGroundPtr)
@@ -914,23 +951,29 @@ if __name__ == "__main__":
         GuiCheckBox(Rectangle(screenWidth - 250, 220, 20, 20), b"Draw Bootstrap Contacts", drawBootstrapContactsPtr)
         GuiCheckBox(Rectangle(screenWidth - 250, 245, 20, 20), b"Draw Terrain Samples", drawTerrainSamplesPtr)
         GuiCheckBox(Rectangle(screenWidth - 250, 270, 20, 20), b"Draw Terrain Normals", drawTerrainNormalsPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 295, 20, 20), b"Draw Blue Geno", drawReconstructedPosePtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 320, 20, 20), b"Blue Geno Local", drawPoseModelLocalPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 345, 20, 20), b"Draw Reconstruction Error", drawReconstructionErrorPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 370, 20, 20), b"Integrate Root Motion", integrateRootMotionPtr)
-        GuiLabel(Rectangle(screenWidth - 250, 390, 220, 20), b"Trajectory Projection: Terrain")
-        GuiLabel(Rectangle(screenWidth - 250, 410, 220, 20), b"Terrain Grid: %d x %d" % (
+        GuiCheckBox(Rectangle(screenWidth - 250, 295, 20, 20), b"Draw Body Proxy", drawBodyProxyPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 320, 20, 20), b"Draw Penetration", drawTerrainPenetrationPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 345, 20, 20), b"Draw Blue Geno", drawReconstructedPosePtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 370, 20, 20), b"Blue Geno Local", drawPoseModelLocalPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 395, 20, 20), b"Draw Reconstruction Error", drawReconstructionErrorPtr)
+        GuiCheckBox(Rectangle(screenWidth - 250, 420, 20, 20), b"Integrate Root Motion", integrateRootMotionPtr)
+        GuiLabel(Rectangle(screenWidth - 250, 440, 220, 20), b"Trajectory Projection: Terrain")
+        GuiLabel(Rectangle(screenWidth - 250, 460, 220, 20), b"Terrain Grid: %d x %d" % (
             terrainHeightGrid["num_x"],
             terrainHeightGrid["num_z"],
         ))
-        GuiLabel(Rectangle(screenWidth - 250, 430, 220, 20), b"Terrain H: %.4f" % terrainHeightAtFocus)
-        GuiLabel(Rectangle(screenWidth - 250, 450, 220, 20), b"Terrain Samples: %d" % len(terrainProvider.sample_positions))
-        GuiLabel(Rectangle(screenWidth - 250, 470, 220, 20), b"Terrain N: [% .2f % .2f % .2f]" % (
+        GuiLabel(Rectangle(screenWidth - 250, 480, 220, 20), b"Terrain H: %.4f" % terrainHeightAtFocus)
+        GuiLabel(Rectangle(screenWidth - 250, 500, 220, 20), b"Terrain Samples: %d" % len(terrainProvider.sample_positions))
+        GuiLabel(Rectangle(screenWidth - 250, 520, 220, 20), b"Terrain N: [% .2f % .2f % .2f]" % (
             terrainNormalAtFocus[0],
             terrainNormalAtFocus[1],
             terrainNormalAtFocus[2],
         ))
-        GuiLabel(Rectangle(screenWidth - 250, 490, 220, 20), b"%s: mean %.6f max %.6f" % (
+        GuiLabel(Rectangle(screenWidth - 250, 540, 220, 20), b"Pen: %d max %.4f" % (
+            penetrationCount,
+            maxPenetrationDepth,
+        ))
+        GuiLabel(Rectangle(screenWidth - 250, 560, 220, 20), b"%s: mean %.6f max %.6f" % (
             poseErrorLabel,
             posePositionErrorMean,
             posePositionErrorMax))

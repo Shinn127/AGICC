@@ -1,6 +1,7 @@
 import numpy as np
 
 import quat
+from Utils import ClampFrameIndex, ComputeFiniteDifferenceVelocities
 
 try:
     from scipy import signal as scipy_signal
@@ -24,10 +25,6 @@ TERRAIN_FORWARD_SMOOTH_ALPHA = 0.3
 
 def GetRootTrajectorySampleOffsets(step=10, radius=60):
     return np.arange(-radius, radius + 1, step, dtype=np.int32)
-
-
-def ClampFrameIndex(frameIndex, frameCount):
-    return int(np.clip(frameIndex, 0, frameCount - 1))
 
 
 def NormalizeDirection(direction, fallback=ROOT_FORWARD_AXIS):
@@ -210,32 +207,6 @@ def ComputeRootWorldForwardSeries(globalRotations, rootIndex=ROOT_JOINT_INDEX):
     return quat.mul_vec(globalRotations[:, rootIndex], ROOT_FORWARD_AXIS).astype(np.float32)
 
 
-def ComputeTrajectoryVelocities(positions, dt):
-    velocities = np.zeros_like(positions, dtype=np.float32)
-    if len(positions) == 0:
-        return velocities
-    if len(positions) == 1:
-        return velocities
-    if len(positions) == 2:
-        singleStepVelocity = ((positions[1] - positions[0]) / dt).astype(np.float32)
-        velocities[:] = singleStepVelocity
-        return velocities
-
-    velocities[1:-1] = (
-        0.5 * (positions[2:] - positions[1:-1]) / dt +
-        0.5 * (positions[1:-1] - positions[:-2]) / dt
-    ).astype(np.float32)
-
-    if len(positions) >= 4:
-        velocities[0] = velocities[1] - (velocities[3] - velocities[2])
-        velocities[-1] = velocities[-2] + (velocities[-2] - velocities[-3])
-    else:
-        velocities[0] = velocities[1]
-        velocities[-1] = velocities[-2]
-
-    return velocities.astype(np.float32)
-
-
 def BuildSmoothedRootTrajectorySource(
     globalPositions,
     globalRotations,
@@ -269,7 +240,7 @@ def BuildSmoothedRootTrajectorySource(
             smoothedDirections,
         )
     ).astype(np.float32)
-    smoothedVelocities = ComputeTrajectoryVelocities(smoothedPositions, dt)
+    smoothedVelocities = ComputeFiniteDifferenceVelocities(smoothedPositions, dt)
 
     return {
         "positions": smoothedPositions.astype(np.float32),
@@ -354,7 +325,7 @@ def BuildTerrainAwareRootTrajectorySource(
         smoothedNormalCandidates,
         smoothedForwardCandidates,
     )
-    smoothedVelocities = ComputeTrajectoryVelocities(smoothedPositions, dt)
+    smoothedVelocities = ComputeFiniteDifferenceVelocities(smoothedPositions, dt)
 
     return {
         "positions": smoothedPositions.astype(np.float32),
