@@ -3,8 +3,23 @@ import numpy as np
 from pyray import Color, Vector3, Vector4
 from raylib import *
 
+__all__ = [
+    "DrawSkeleton",
+    "OffsetPositions",
+    "DrawPoseReconstructionError",
+    "DrawContactStates",
+    "DrawContactDataFrame",
+    "DrawTerrainSamples",
+    "DrawTerrainNormals",
+    "DrawBodyProxyFrame",
+    "DrawTerrainPenetrationFrame",
+    "DrawRootTrajectoryDebug",
+]
 
-def DrawTransform(position, rotation, scale):
+
+# Internal drawing helpers.
+
+def _draw_transform(position, rotation, scale):
     rotMatrix = QuaternionToMatrix(Vector4(*rotation))
 
     DrawLine3D(
@@ -23,6 +38,8 @@ def DrawTransform(position, rotation, scale):
         BLUE)
 
 
+# Public debug-space helpers and draw API.
+
 def DrawSkeleton(positions, rotations, parents, color):
     for i in range(len(positions)):
 
@@ -33,7 +50,7 @@ def DrawSkeleton(positions, rotations, parents, color):
             6,
             color)
 
-        DrawTransform(positions[i], rotations[i], 0.1)
+        _draw_transform(positions[i], rotations[i], 0.1)
 
         if parents[i] != -1:
 
@@ -183,7 +200,7 @@ def DrawTerrainPenetrationFrame(
         )
 
 
-def GetTrajectoryDebugColor(sampleOffset):
+def _get_trajectory_debug_color(sampleOffset):
     if sampleOffset < 0:
         return SKYBLUE
     if sampleOffset > 0:
@@ -205,7 +222,7 @@ def DrawRootTrajectoryDebug(
     capsuleRings=7):
 
     for i, sampleOffset in enumerate(sampleOffsets):
-        color = GetTrajectoryDebugColor(sampleOffset)
+        color = _get_trajectory_debug_color(sampleOffset)
         radius = 0.07 if sampleOffset == 0 else 0.05
         position = worldPositions[i]
 

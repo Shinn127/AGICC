@@ -11,6 +11,17 @@ DEFAULT_TERRAIN_CELL_SIZE = 0.1
 DEFAULT_TERRAIN_PADDING = 0.5
 MAX_TERRAIN_VERTEX_COUNT = 60000
 
+__all__ = [
+    "TerrainProvider",
+    "BuildTerrainProvider",
+    "BuildTerrainSamplesFromContactData",
+    "BuildTerrainProviderFromContactData",
+    "BuildTerrainHeightGrid",
+    "LoadTerrainModelFromProvider",
+]
+
+
+# Core terrain query object.
 
 class TerrainProvider:
 
@@ -79,6 +90,21 @@ class TerrainProvider:
         return nearestIndices, nearestDistancesSquared
 
 
+# Public terrain constructors.
+
+def BuildTerrainProvider(
+    samplePositions,
+    fallbackHeight=0.0,
+    kNearest=8):
+    return TerrainProvider(
+        samplePositions,
+        fallbackHeight=fallbackHeight,
+        kNearest=kNearest,
+    )
+
+
+# Integration adapters from contact observations into terrain data.
+
 def BuildTerrainSamplesFromContactData(
     contactData,
     filtered=True,
@@ -129,14 +155,16 @@ def BuildTerrainProviderFromContactData(
         filtered=filtered,
         cellSize=cellSize,
     )
-    return TerrainProvider(
+    return BuildTerrainProvider(
         samplePositions,
         fallbackHeight=fallbackHeight,
         kNearest=kNearest,
     )
 
 
-def ComputeTerrainBounds(samplePositions, padding=DEFAULT_TERRAIN_PADDING, minExtent=1.0):
+# Internal helpers for height-grid and mesh generation.
+
+def _compute_terrain_bounds(samplePositions, padding=DEFAULT_TERRAIN_PADDING, minExtent=1.0):
     samplePositions = np.asarray(samplePositions, dtype=np.float32).reshape((-1, 3))
     padding = float(padding)
     minExtent = float(minExtent)
@@ -163,7 +191,7 @@ def ComputeTerrainBounds(samplePositions, padding=DEFAULT_TERRAIN_PADDING, minEx
     return (minX, maxX, minZ, maxZ)
 
 
-def ChooseTerrainCellSize(bounds, desiredCellSize=DEFAULT_TERRAIN_CELL_SIZE, maxVertexCount=MAX_TERRAIN_VERTEX_COUNT):
+def _choose_terrain_cell_size(bounds, desiredCellSize=DEFAULT_TERRAIN_CELL_SIZE, maxVertexCount=MAX_TERRAIN_VERTEX_COUNT):
     minX, maxX, minZ, maxZ = bounds
     cellSize = max(float(desiredCellSize), 1e-3)
 
@@ -182,8 +210,8 @@ def BuildTerrainHeightGrid(
     padding=DEFAULT_TERRAIN_PADDING,
     maxVertexCount=MAX_TERRAIN_VERTEX_COUNT):
 
-    bounds = ComputeTerrainBounds(samplePositions, padding=padding)
-    cellSize, numX, numZ = ChooseTerrainCellSize(
+    bounds = _compute_terrain_bounds(samplePositions, padding=padding)
+    cellSize, numX, numZ = _choose_terrain_cell_size(
         bounds,
         desiredCellSize=cellSize,
         maxVertexCount=maxVertexCount,
@@ -213,7 +241,7 @@ def BuildTerrainHeightGrid(
     }
 
 
-def ComputeTerrainGridNormals(gridPositions):
+def _compute_terrain_grid_normals(gridPositions):
     gridPositions = np.asarray(gridPositions, dtype=np.float32)
     numZ, numX, _ = gridPositions.shape
     normals = np.zeros_like(gridPositions, dtype=np.float32)
@@ -241,9 +269,9 @@ def ComputeTerrainGridNormals(gridPositions):
     return normals.astype(np.float32)
 
 
-def BuildTerrainMeshArrays(heightGrid):
+def _build_terrain_mesh_arrays(heightGrid):
     gridPositions = np.asarray(heightGrid["positions"], dtype=np.float32)
-    normalsGrid = ComputeTerrainGridNormals(gridPositions)
+    normalsGrid = _compute_terrain_grid_normals(gridPositions)
     numZ, numX, _ = gridPositions.shape
 
     vertices = gridPositions.reshape((-1, 3)).astype(np.float32)
@@ -279,6 +307,8 @@ def BuildTerrainMeshArrays(heightGrid):
     }
 
 
+# Render adapter: converts the terrain height field into a raylib model.
+
 def LoadTerrainModelFromProvider(
     terrainProvider,
     samplePositions,
@@ -293,7 +323,7 @@ def LoadTerrainModelFromProvider(
         padding=padding,
         maxVertexCount=maxVertexCount,
     )
-    meshArrays = BuildTerrainMeshArrays(heightGrid)
+    meshArrays = _build_terrain_mesh_arrays(heightGrid)
 
     mesh = Mesh()
     mesh.vertexCount = int(len(meshArrays["vertices"]))

@@ -4,12 +4,22 @@ import quat
 from RootModule import DEFAULT_BVH_FRAME_TIME
 from Utils import ComputeFiniteDifferenceVelocities
 
+__all__ = [
+    "BuildPoseSource",
+    "BuildLocalPose",
+    "BuildDefaultPoseFeature",
+    "ReconstructPoseWorldSpace",
+    "ComputePosePositionError",
+]
 
-def ComputePoseVelocities(globalPositions, dt=DEFAULT_BVH_FRAME_TIME):
+
+# Public pose pipeline.
+
+def _compute_pose_velocities(globalPositions, dt=DEFAULT_BVH_FRAME_TIME):
     return ComputeFiniteDifferenceVelocities(globalPositions, dt)
 
 
-def ComputePoseAngularVelocities(globalRotations, dt=DEFAULT_BVH_FRAME_TIME):
+def _compute_pose_angular_velocities(globalRotations, dt=DEFAULT_BVH_FRAME_TIME):
     globalRotations = np.asarray(globalRotations, dtype=np.float32)
     angularVelocities = np.zeros(globalRotations.shape[:-1] + (3,), dtype=np.float32)
 
@@ -43,7 +53,7 @@ def ComputePoseAngularVelocities(globalRotations, dt=DEFAULT_BVH_FRAME_TIME):
     return angularVelocities.astype(np.float32)
 
 
-def ConvertLocalRotationsTo6D(localRotations):
+def _convert_local_rotations_to_6d(localRotations):
     rotationsXY = quat.to_xform_xy(localRotations).astype(np.float32)
     return rotationsXY.reshape(rotationsXY.shape[:-2] + (6,))
 
@@ -58,14 +68,14 @@ def BuildPoseSource(
         "global_positions": np.asarray(globalPositions, dtype=np.float32),
         "global_rotations": np.asarray(globalRotations, dtype=np.float32),
     }
-    poseSource["global_velocities"] = ComputePoseVelocities(poseSource["global_positions"], dt)
-    poseSource["global_angular_velocities"] = ComputePoseAngularVelocities(
+    poseSource["global_velocities"] = _compute_pose_velocities(poseSource["global_positions"], dt)
+    poseSource["global_angular_velocities"] = _compute_pose_angular_velocities(
         poseSource["global_rotations"],
         dt,
     )
 
     if rootTrajectorySource is not None:
-        poseSource["root_angular_velocities"] = ComputePoseAngularVelocities(
+        poseSource["root_angular_velocities"] = _compute_pose_angular_velocities(
             np.asarray(rootTrajectorySource["rotations"], dtype=np.float32),
             dt,
         )
@@ -86,7 +96,7 @@ def BuildLocalPose(
     if "root_angular_velocities" in poseSource:
         rootAngularVelocity = poseSource["root_angular_velocities"][currentFrame].astype(np.float32)
     else:
-        rootAngularVelocity = ComputePoseAngularVelocities(
+        rootAngularVelocity = _compute_pose_angular_velocities(
             np.asarray(rootTrajectorySource["rotations"], dtype=np.float32),
             dt,
         )[currentFrame]
@@ -108,7 +118,7 @@ def BuildLocalPose(
         "current_root_rotation": rootRotation,
         "local_positions": localPositions,
         "local_rotations": localRotations,
-        "local_rotations_6d": ConvertLocalRotationsTo6D(localRotations),
+        "local_rotations_6d": _convert_local_rotations_to_6d(localRotations),
         "local_velocities": localVelocities,
         "local_angular_velocities": localAngularVelocities,
         "root_local_velocity": rootLocalVelocity,
@@ -132,14 +142,14 @@ def BuildDefaultPoseFeature(localPose, includeRootMotion=True):
     return np.concatenate(featureParts).astype(np.float32)
 
 
-def Convert6DRotationsToLocalRotations(localRotations6D):
+def _convert_6d_rotations_to_local_rotations(localRotations6D):
     rotationsXY = np.asarray(localRotations6D, dtype=np.float32).reshape(
         localRotations6D.shape[:-1] + (3, 2)
     )
     return quat.from_xform_xy(rotationsXY).astype(np.float32)
 
 
-def IntegrateRootMotion(
+def _integrate_root_motion(
     rootPosition,
     rootRotation,
     rootLocalVelocity,
@@ -183,7 +193,7 @@ def ReconstructPoseWorldSpace(
     )
 
     if integrateRootMotion:
-        rootMotion = IntegrateRootMotion(
+        rootMotion = _integrate_root_motion(
             rootPosition,
             rootRotation,
             localPose["root_local_velocity"],
@@ -205,7 +215,7 @@ def ReconstructPoseWorldSpace(
 
     localRotations = localPose.get("local_rotations")
     if localRotations is None:
-        localRotations = Convert6DRotationsToLocalRotations(localPose["local_rotations_6d"])
+        localRotations = _convert_6d_rotations_to_local_rotations(localPose["local_rotations_6d"])
 
     worldPositions = (
         quat.mul_vec(rootRotation, localPose["local_positions"]) + rootPosition

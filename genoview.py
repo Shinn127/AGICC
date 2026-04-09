@@ -5,8 +5,8 @@ from pyray import (
 from raylib import *
 from raylib.defines import *
 
+from types import SimpleNamespace
 from pathlib import Path
-import quat
 import numpy as np
 import cffi
 from BVHImporter import BVHImporter
@@ -29,7 +29,6 @@ from RootModule import (
     BuildRootTrajectorySource,
     AdaptRootTrajectoryToTerrain,
     BuildRootLocalTrajectory,
-    BuildRootTrajectoryDisplay,
     BuildTerrainAdaptedRootTrajectoryDisplay,
 )
 from TerrainModule import BuildTerrainProviderFromContactData, LoadTerrainModelFromProvider
@@ -278,744 +277,936 @@ def EndGBuffer(windowWidth, windowHeight):
 # App
 #----------------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    
-    # Init Window
-    
-    screenWidth = 1280
-    screenHeight = 720
-    
-    SetConfigFlags(FLAG_VSYNC_HINT)
-    InitWindow(screenWidth, screenHeight, b"GenoViewPython")
-    SetTargetFPS(60)
+def _make_bool_ptr(value):
+    ptr = ffi.new("bool*")
+    ptr[0] = bool(value)
+    return ptr
 
-    # Shaders
-    
-    shadowShader = LoadShader(resource_path("shadow.vs", as_bytes=True), resource_path("shadow.fs", as_bytes=True))
-    shadowShaderLightClipNear = GetShaderLocation(shadowShader, b"lightClipNear")
-    shadowShaderLightClipFar = GetShaderLocation(shadowShader, b"lightClipFar")
-    
-    skinnedShadowShader = LoadShader(resource_path("skinnedShadow.vs", as_bytes=True), resource_path("shadow.fs", as_bytes=True))
-    skinnedShadowShaderLightClipNear = GetShaderLocation(skinnedShadowShader, b"lightClipNear")
-    skinnedShadowShaderLightClipFar = GetShaderLocation(skinnedShadowShader, b"lightClipFar")
-    
-    skinnedBasicShader = LoadShader(resource_path("skinnedBasic.vs", as_bytes=True), resource_path("basic.fs", as_bytes=True))
-    skinnedBasicShaderSpecularity = GetShaderLocation(skinnedBasicShader, b"specularity")
-    skinnedBasicShaderGlossiness = GetShaderLocation(skinnedBasicShader, b"glossiness")
-    skinnedBasicShaderCamClipNear = GetShaderLocation(skinnedBasicShader, b"camClipNear")
-    skinnedBasicShaderCamClipFar = GetShaderLocation(skinnedBasicShader, b"camClipFar")
 
-    basicShader = LoadShader(resource_path("basic.vs", as_bytes=True), resource_path("basic.fs", as_bytes=True))
-    basicShaderSpecularity = GetShaderLocation(basicShader, b"specularity")
-    basicShaderGlossiness = GetShaderLocation(basicShader, b"glossiness")
-    basicShaderCamClipNear = GetShaderLocation(basicShader, b"camClipNear")
-    basicShaderCamClipFar = GetShaderLocation(basicShader, b"camClipFar")
-    
-    lightingShader = LoadShader(resource_path("post.vs", as_bytes=True), resource_path("lighting.fs", as_bytes=True))
-    lightingShaderGBufferColor = GetShaderLocation(lightingShader, b"gbufferColor")
-    lightingShaderGBufferNormal = GetShaderLocation(lightingShader, b"gbufferNormal")
-    lightingShaderGBufferDepth = GetShaderLocation(lightingShader, b"gbufferDepth")
-    lightingShaderSSAO = GetShaderLocation(lightingShader, b"ssao")
-    lightingShaderCamPos = GetShaderLocation(lightingShader, b"camPos")
-    lightingShaderCamInvViewProj = GetShaderLocation(lightingShader, b"camInvViewProj")
-    lightingShaderLightDir = GetShaderLocation(lightingShader, b"lightDir")
-    lightingShaderSunColor = GetShaderLocation(lightingShader, b"sunColor")
-    lightingShaderSunStrength = GetShaderLocation(lightingShader, b"sunStrength")
-    lightingShaderSkyColor = GetShaderLocation(lightingShader, b"skyColor")
-    lightingShaderSkyStrength = GetShaderLocation(lightingShader, b"skyStrength")
-    lightingShaderGroundStrength = GetShaderLocation(lightingShader, b"groundStrength")
-    lightingShaderAmbientStrength = GetShaderLocation(lightingShader, b"ambientStrength")
-    lightingShaderExposure = GetShaderLocation(lightingShader, b"exposure")
-    lightingShaderCamClipNear = GetShaderLocation(lightingShader, b"camClipNear")
-    lightingShaderCamClipFar = GetShaderLocation(lightingShader, b"camClipFar")
-    
-    ssaoShader = LoadShader(resource_path("post.vs", as_bytes=True), resource_path("ssao.fs", as_bytes=True))
-    ssaoShaderGBufferNormal = GetShaderLocation(ssaoShader, b"gbufferNormal")
-    ssaoShaderGBufferDepth = GetShaderLocation(ssaoShader, b"gbufferDepth")
-    ssaoShaderCamView = GetShaderLocation(ssaoShader, b"camView")
-    ssaoShaderCamProj = GetShaderLocation(ssaoShader, b"camProj")
-    ssaoShaderCamInvProj = GetShaderLocation(ssaoShader, b"camInvProj")
-    ssaoShaderCamInvViewProj = GetShaderLocation(ssaoShader, b"camInvViewProj")
-    ssaoShaderLightViewProj = GetShaderLocation(ssaoShader, b"lightViewProj")
-    ssaoShaderShadowMap = GetShaderLocation(ssaoShader, b"shadowMap")
-    ssaoShaderShadowInvResolution = GetShaderLocation(ssaoShader, b"shadowInvResolution")
-    ssaoShaderCamClipNear = GetShaderLocation(ssaoShader, b"camClipNear")
-    ssaoShaderCamClipFar = GetShaderLocation(ssaoShader, b"camClipFar")
-    ssaoShaderLightClipNear = GetShaderLocation(ssaoShader, b"lightClipNear")
-    ssaoShaderLightClipFar = GetShaderLocation(ssaoShader, b"lightClipFar")
-    ssaoShaderLightDir = GetShaderLocation(ssaoShader, b"lightDir")
-    
-    blurShader = LoadShader(resource_path("post.vs", as_bytes=True), resource_path("blur.fs", as_bytes=True))
-    blurShaderGBufferNormal = GetShaderLocation(blurShader, b"gbufferNormal")
-    blurShaderGBufferDepth = GetShaderLocation(blurShader, b"gbufferDepth")
-    blurShaderInputTexture = GetShaderLocation(blurShader, b"inputTexture")
-    blurShaderCamInvProj = GetShaderLocation(blurShader, b"camInvProj")
-    blurShaderCamClipNear = GetShaderLocation(blurShader, b"camClipNear")
-    blurShaderCamClipFar = GetShaderLocation(blurShader, b"camClipFar")
-    blurShaderInvTextureResolution = GetShaderLocation(blurShader, b"invTextureResolution")
-    blurShaderBlurDirection = GetShaderLocation(blurShader, b"blurDirection")
+def _make_float_ptr(value):
+    ptr = ffi.new("float*")
+    ptr[0] = float(value)
+    return ptr
 
-    fxaaShader = LoadShader(resource_path("post.vs", as_bytes=True), resource_path("fxaa.fs", as_bytes=True))
-    fxaaShaderInputTexture = GetShaderLocation(fxaaShader, b"inputTexture")
-    fxaaShaderInvTextureResolution = GetShaderLocation(fxaaShader, b"invTextureResolution")
-    
-    # Objects
-    
-    groundMesh = GenMeshPlane(20.0, 20.0, 10, 10)
-    groundModel = LoadModelFromMesh(groundMesh)
-    groundPosition = Vector3(0.0, -0.01, 0.0)
-    
-    genoModel = LoadCharacterModel(resource_path("Geno.bin", as_bytes=True))
-    poseModel = LoadCharacterModel(resource_path("Geno.bin", as_bytes=True))
-    genoPosition = Vector3(0.0, 0.0, 0.0)
-    
-    bindPos, bindRot = GetModelBindPoseAsNumpyArrays(genoModel)
-    
-    # Animation
-    
-    # bvhAnimation = BVHImporter.load(resource_path("ground1_subject1.bvh"), scale=0.01)
-    # bvhAnimation = BVHImporter.load(resource_path("Geno_bind.bvh"), scale=0.01)
-    bvhAnimation = BVHImporter.load(resource_path("bvh/lafan1/walk1_subject5.bvh"), scale=0.01)
 
-    parents = bvhAnimation.parents
-    globalRotations = bvhAnimation.global_rotations
-    globalPositions = bvhAnimation.global_positions
-    trajectorySampleOffsets = GetRootTrajectorySampleOffsets()
-    bvhFrameTime = DEFAULT_BVH_FRAME_TIME
-    basePoseSource = BuildPoseSource(
-        globalPositions,
-        globalRotations,
-        bvhFrameTime,
+def _draw_model_with_shader(model, shader, position, color):
+    model.materials[0].shader = shader
+    DrawModel(model, position, 1.0, color)
+
+
+def _load_shader_resources():
+    shadow_program = LoadShader(resource_path("shadow.vs", as_bytes=True), resource_path("shadow.fs", as_bytes=True))
+    skinned_shadow_program = LoadShader(
+        resource_path("skinnedShadow.vs", as_bytes=True),
+        resource_path("shadow.fs", as_bytes=True),
     )
-    bootstrapContactData = BuildContactData(
-        globalPositions,
-        basePoseSource["global_velocities"],
-        bvhAnimation.raw_data["names"],
+    skinned_basic_program = LoadShader(
+        resource_path("skinnedBasic.vs", as_bytes=True),
+        resource_path("basic.fs", as_bytes=True),
+    )
+    basic_program = LoadShader(resource_path("basic.vs", as_bytes=True), resource_path("basic.fs", as_bytes=True))
+    lighting_program = LoadShader(resource_path("post.vs", as_bytes=True), resource_path("lighting.fs", as_bytes=True))
+    ssao_program = LoadShader(resource_path("post.vs", as_bytes=True), resource_path("ssao.fs", as_bytes=True))
+    blur_program = LoadShader(resource_path("post.vs", as_bytes=True), resource_path("blur.fs", as_bytes=True))
+    fxaa_program = LoadShader(resource_path("post.vs", as_bytes=True), resource_path("fxaa.fs", as_bytes=True))
+
+    return SimpleNamespace(
+        shadow=SimpleNamespace(
+            program=shadow_program,
+            light_clip_near=GetShaderLocation(shadow_program, b"lightClipNear"),
+            light_clip_far=GetShaderLocation(shadow_program, b"lightClipFar"),
+        ),
+        skinned_shadow=SimpleNamespace(
+            program=skinned_shadow_program,
+            light_clip_near=GetShaderLocation(skinned_shadow_program, b"lightClipNear"),
+            light_clip_far=GetShaderLocation(skinned_shadow_program, b"lightClipFar"),
+        ),
+        skinned_basic=SimpleNamespace(
+            program=skinned_basic_program,
+            specularity=GetShaderLocation(skinned_basic_program, b"specularity"),
+            glossiness=GetShaderLocation(skinned_basic_program, b"glossiness"),
+            cam_clip_near=GetShaderLocation(skinned_basic_program, b"camClipNear"),
+            cam_clip_far=GetShaderLocation(skinned_basic_program, b"camClipFar"),
+        ),
+        basic=SimpleNamespace(
+            program=basic_program,
+            specularity=GetShaderLocation(basic_program, b"specularity"),
+            glossiness=GetShaderLocation(basic_program, b"glossiness"),
+            cam_clip_near=GetShaderLocation(basic_program, b"camClipNear"),
+            cam_clip_far=GetShaderLocation(basic_program, b"camClipFar"),
+        ),
+        lighting=SimpleNamespace(
+            program=lighting_program,
+            gbuffer_color=GetShaderLocation(lighting_program, b"gbufferColor"),
+            gbuffer_normal=GetShaderLocation(lighting_program, b"gbufferNormal"),
+            gbuffer_depth=GetShaderLocation(lighting_program, b"gbufferDepth"),
+            ssao=GetShaderLocation(lighting_program, b"ssao"),
+            cam_pos=GetShaderLocation(lighting_program, b"camPos"),
+            cam_inv_view_proj=GetShaderLocation(lighting_program, b"camInvViewProj"),
+            light_dir=GetShaderLocation(lighting_program, b"lightDir"),
+            sun_color=GetShaderLocation(lighting_program, b"sunColor"),
+            sun_strength=GetShaderLocation(lighting_program, b"sunStrength"),
+            sky_color=GetShaderLocation(lighting_program, b"skyColor"),
+            sky_strength=GetShaderLocation(lighting_program, b"skyStrength"),
+            ground_strength=GetShaderLocation(lighting_program, b"groundStrength"),
+            ambient_strength=GetShaderLocation(lighting_program, b"ambientStrength"),
+            exposure=GetShaderLocation(lighting_program, b"exposure"),
+            cam_clip_near=GetShaderLocation(lighting_program, b"camClipNear"),
+            cam_clip_far=GetShaderLocation(lighting_program, b"camClipFar"),
+        ),
+        ssao=SimpleNamespace(
+            program=ssao_program,
+            gbuffer_normal=GetShaderLocation(ssao_program, b"gbufferNormal"),
+            gbuffer_depth=GetShaderLocation(ssao_program, b"gbufferDepth"),
+            cam_view=GetShaderLocation(ssao_program, b"camView"),
+            cam_proj=GetShaderLocation(ssao_program, b"camProj"),
+            cam_inv_proj=GetShaderLocation(ssao_program, b"camInvProj"),
+            cam_inv_view_proj=GetShaderLocation(ssao_program, b"camInvViewProj"),
+            light_view_proj=GetShaderLocation(ssao_program, b"lightViewProj"),
+            shadow_map=GetShaderLocation(ssao_program, b"shadowMap"),
+            shadow_inv_resolution=GetShaderLocation(ssao_program, b"shadowInvResolution"),
+            cam_clip_near=GetShaderLocation(ssao_program, b"camClipNear"),
+            cam_clip_far=GetShaderLocation(ssao_program, b"camClipFar"),
+            light_clip_near=GetShaderLocation(ssao_program, b"lightClipNear"),
+            light_clip_far=GetShaderLocation(ssao_program, b"lightClipFar"),
+            light_dir=GetShaderLocation(ssao_program, b"lightDir"),
+        ),
+        blur=SimpleNamespace(
+            program=blur_program,
+            gbuffer_normal=GetShaderLocation(blur_program, b"gbufferNormal"),
+            gbuffer_depth=GetShaderLocation(blur_program, b"gbufferDepth"),
+            input_texture=GetShaderLocation(blur_program, b"inputTexture"),
+            cam_inv_proj=GetShaderLocation(blur_program, b"camInvProj"),
+            cam_clip_near=GetShaderLocation(blur_program, b"camClipNear"),
+            cam_clip_far=GetShaderLocation(blur_program, b"camClipFar"),
+            inv_texture_resolution=GetShaderLocation(blur_program, b"invTextureResolution"),
+            blur_direction=GetShaderLocation(blur_program, b"blurDirection"),
+        ),
+        fxaa=SimpleNamespace(
+            program=fxaa_program,
+            input_texture=GetShaderLocation(fxaa_program, b"inputTexture"),
+            inv_texture_resolution=GetShaderLocation(fxaa_program, b"invTextureResolution"),
+        ),
+    )
+
+
+def _load_scene_resources():
+    ground_model = LoadModelFromMesh(GenMeshPlane(20.0, 20.0, 10, 10))
+    geno_model = LoadCharacterModel(resource_path("Geno.bin", as_bytes=True))
+    pose_model = LoadCharacterModel(resource_path("Geno.bin", as_bytes=True))
+    bind_pos, bind_rot = GetModelBindPoseAsNumpyArrays(geno_model)
+
+    return SimpleNamespace(
+        ground_model=ground_model,
+        ground_position=Vector3(0.0, -0.01, 0.0),
+        geno_model=geno_model,
+        pose_model=pose_model,
+        geno_position=Vector3(0.0, 0.0, 0.0),
+        bind_pos=bind_pos,
+        bind_rot=bind_rot,
+    )
+
+
+def _load_motion_resources(scene):
+    bvh_animation = BVHImporter.load(resource_path("bvh/lafan1/obstacles1_subject5.bvh"), scale=0.01)
+    global_positions = bvh_animation.global_positions
+    global_rotations = bvh_animation.global_rotations
+    bvh_frame_time = DEFAULT_BVH_FRAME_TIME
+    trajectory_sample_offsets = GetRootTrajectorySampleOffsets()
+
+    base_pose_source = BuildPoseSource(
+        global_positions,
+        global_rotations,
+        bvh_frame_time,
+    )
+    bootstrap_contact_data = BuildContactData(
+        global_positions,
+        base_pose_source["global_velocities"],
+        bvh_animation.raw_data["names"],
         bootstrap=True,
     )
-    terrainProvider = BuildTerrainProviderFromContactData(
-        bootstrapContactData,
+    terrain_provider = BuildTerrainProviderFromContactData(
+        bootstrap_contact_data,
         filtered=True,
-        fallbackHeight=groundPosition.y,
+        fallbackHeight=scene.ground_position.y,
     )
-    contactData = BuildContactData(
-        globalPositions,
-        basePoseSource["global_velocities"],
-        bvhAnimation.raw_data["names"],
-        terrainProvider=terrainProvider,
+    contact_data = BuildContactData(
+        global_positions,
+        base_pose_source["global_velocities"],
+        bvh_animation.raw_data["names"],
+        terrainProvider=terrain_provider,
     )
-    bodyProxyLayout = BuildBodyProxyLayout(
-        globalPositions[0],
-        parents,
-        bvhAnimation.raw_data["names"],
+    body_proxy_layout = BuildBodyProxyLayout(
+        global_positions[0],
+        bvh_animation.parents,
+        bvh_animation.raw_data["names"],
     )
-    terrainModel, terrainHeightGrid = LoadTerrainModelFromProvider(
-        terrainProvider,
-        terrainProvider.sample_positions,
+    terrain_model, terrain_height_grid = LoadTerrainModelFromProvider(
+        terrain_provider,
+        terrain_provider.sample_positions,
         cellSize=0.1,
         padding=0.5,
     )
-    motionRootTrajectory = BuildRootTrajectorySource(
-        globalPositions,
-        globalRotations,
-        bvhFrameTime,
+    motion_root_trajectory = BuildRootTrajectorySource(
+        global_positions,
+        global_rotations,
+        bvh_frame_time,
         rootIndex=ROOT_JOINT_INDEX,
         mode="height_3d",
     )
-    terrainAdaptedRootTrajectory = AdaptRootTrajectoryToTerrain(
-        motionRootTrajectory,
-        terrainProvider,
+    terrain_adapted_root_trajectory = AdaptRootTrajectoryToTerrain(
+        motion_root_trajectory,
+        terrain_provider,
         alignPositionsToTerrain=False,
     )
-    poseSource = BuildPoseSource(
-        globalPositions,
-        globalRotations,
-        bvhFrameTime,
-        rootTrajectorySource=motionRootTrajectory,
+    pose_source = BuildPoseSource(
+        global_positions,
+        global_rotations,
+        bvh_frame_time,
+        rootTrajectorySource=motion_root_trajectory,
     )
-    terrainSampleNormals = terrainProvider.sample_normals(terrainProvider.sample_positions)
-    
-    animationFrame = 0
-    
-    # Camera
-    
-    camera = Camera()
-    
-    rlSetClipPlanes(0.01, 50.0)
-    
-    # Shadows
-    
-    lightDir = Vector3Normalize(Vector3(0.35, -1.0, -0.35))
-    
-    shadowLight = ShadowLight()
-    shadowLight.target = Vector3Zero()
-    shadowLight.position = Vector3Scale(lightDir, -5.0)
-    shadowLight.up = Vector3(0.0, 1.0, 0.0)
-    shadowLight.width = 5.0
-    shadowLight.height = 5.0
-    shadowLight.near = 0.01
-    shadowLight.far = 10.0
-    
-    shadowWidth = 1024
-    shadowHeight = 1024
-    shadowInvResolution = Vector2(1.0 / shadowWidth, 1.0 / shadowHeight)
-    shadowMap = LoadShadowMap(shadowWidth, shadowHeight)    
-    
-    # GBuffer and Render Textures
-    
-    gbuffer = LoadGBuffer(screenWidth, screenHeight)
-    lighted = LoadRenderTexture(screenWidth, screenHeight)
-    ssaoFront = LoadRenderTexture(screenWidth, screenHeight)
-    ssaoBack = LoadRenderTexture(screenWidth, screenHeight)
-    
-    # UI
-    
-    drawBoneTransformsPtr = ffi.new('bool*'); drawBoneTransformsPtr[0] = False
-    drawFlatGroundPtr = ffi.new('bool*'); drawFlatGroundPtr[0] = False
-    drawTerrainMeshPtr = ffi.new('bool*'); drawTerrainMeshPtr[0] = True
-    drawRootTrajectoryPtr = ffi.new('bool*'); drawRootTrajectoryPtr[0] = True
-    drawTrajectoryDirectionsPtr = ffi.new('bool*'); drawTrajectoryDirectionsPtr[0] = True
-    drawTrajectoryVelocityPtr = ffi.new('bool*'); drawTrajectoryVelocityPtr[0] = True
-    drawContactsPtr = ffi.new('bool*'); drawContactsPtr[0] = True
-    drawBootstrapContactsPtr = ffi.new('bool*'); drawBootstrapContactsPtr[0] = False
-    drawTerrainSamplesPtr = ffi.new('bool*'); drawTerrainSamplesPtr[0] = False
-    drawTerrainNormalsPtr = ffi.new('bool*'); drawTerrainNormalsPtr[0] = False
-    drawBodyProxyPtr = ffi.new('bool*'); drawBodyProxyPtr[0] = False
-    drawTerrainPenetrationPtr = ffi.new('bool*'); drawTerrainPenetrationPtr[0] = False
-    drawReconstructedPosePtr = ffi.new('bool*'); drawReconstructedPosePtr[0] = True
-    drawPoseModelLocalPtr = ffi.new('bool*'); drawPoseModelLocalPtr[0] = False
-    drawReconstructionErrorPtr = ffi.new('bool*'); drawReconstructionErrorPtr[0] = True
-    integrateRootMotionPtr = ffi.new('bool*'); integrateRootMotionPtr[0] = False
-    localDebugOrigin = Vector3(-2.0, 0.0, 0.0)
-    poseModelColor = Color(110, 190, 255, 255)
-    playback = PlaybackController(bvhAnimation.frame_count, bvhFrameTime)
-    
-    # Go
-    
-    while not WindowShouldClose():
-    
-        # Animation
-        
-        animationFrame = playback.update(GetFrameTime())
+
+    return SimpleNamespace(
+        bvh_animation=bvh_animation,
+        parents=bvh_animation.parents,
+        global_positions=global_positions,
+        global_rotations=global_rotations,
+        trajectory_sample_offsets=trajectory_sample_offsets,
+        bvh_frame_time=bvh_frame_time,
+        bootstrap_contact_data=bootstrap_contact_data,
+        terrain_provider=terrain_provider,
+        contact_data=contact_data,
+        body_proxy_layout=body_proxy_layout,
+        terrain_model=terrain_model,
+        terrain_height_grid=terrain_height_grid,
+        motion_root_trajectory=motion_root_trajectory,
+        terrain_adapted_root_trajectory=terrain_adapted_root_trajectory,
+        pose_source=pose_source,
+        terrain_sample_normals=terrain_provider.sample_normals(terrain_provider.sample_positions),
+    )
+
+
+def _create_render_resources(screen_width, screen_height):
+    light_dir = Vector3Normalize(Vector3(0.35, -1.0, -0.35))
+
+    shadow_light = ShadowLight()
+    shadow_light.target = Vector3Zero()
+    shadow_light.position = Vector3Scale(light_dir, -5.0)
+    shadow_light.up = Vector3(0.0, 1.0, 0.0)
+    shadow_light.width = 5.0
+    shadow_light.height = 5.0
+    shadow_light.near = 0.01
+    shadow_light.far = 10.0
+
+    shadow_width = 1024
+    shadow_height = 1024
+
+    return SimpleNamespace(
+        light_dir=light_dir,
+        shadow_light=shadow_light,
+        shadow_map=LoadShadowMap(shadow_width, shadow_height),
+        shadow_inv_resolution=Vector2(1.0 / shadow_width, 1.0 / shadow_height),
+        gbuffer=LoadGBuffer(screen_width, screen_height),
+        lighted=LoadRenderTexture(screen_width, screen_height),
+        ssao_front=LoadRenderTexture(screen_width, screen_height),
+        ssao_back=LoadRenderTexture(screen_width, screen_height),
+    )
+
+
+def _create_debug_state(frame_count, frame_time):
+    return SimpleNamespace(
+        draw_bone_transforms_ptr=_make_bool_ptr(False),
+        draw_flat_ground_ptr=_make_bool_ptr(False),
+        draw_terrain_mesh_ptr=_make_bool_ptr(True),
+        draw_root_trajectory_ptr=_make_bool_ptr(True),
+        draw_trajectory_directions_ptr=_make_bool_ptr(True),
+        draw_trajectory_velocity_ptr=_make_bool_ptr(True),
+        draw_contacts_ptr=_make_bool_ptr(True),
+        draw_bootstrap_contacts_ptr=_make_bool_ptr(False),
+        draw_terrain_samples_ptr=_make_bool_ptr(False),
+        draw_terrain_normals_ptr=_make_bool_ptr(False),
+        draw_body_proxy_ptr=_make_bool_ptr(False),
+        draw_terrain_penetration_ptr=_make_bool_ptr(False),
+        draw_reconstructed_pose_ptr=_make_bool_ptr(True),
+        draw_pose_model_local_ptr=_make_bool_ptr(False),
+        draw_reconstruction_error_ptr=_make_bool_ptr(True),
+        integrate_root_motion_ptr=_make_bool_ptr(False),
+        local_debug_origin=Vector3(-2.0, 0.0, 0.0),
+        pose_model_color=Color(110, 190, 255, 255),
+        playback=PlaybackController(frame_count, frame_time),
+    )
+
+
+def _create_app_state(screen_width, screen_height):
+    scene = _load_scene_resources()
+    motion = _load_motion_resources(scene)
+    return SimpleNamespace(
+        screen_width=screen_width,
+        screen_height=screen_height,
+        shaders=_load_shader_resources(),
+        scene=scene,
+        motion=motion,
+        render=_create_render_resources(screen_width, screen_height),
+        debug=_create_debug_state(motion.bvh_animation.frame_count, motion.bvh_frame_time),
+        camera=Camera(),
+    )
+
+
+def _build_frame_state(app, animation_frame):
+    scene = app.scene
+    motion = app.motion
+    debug = app.debug
+
+    UpdateModelPoseFromNumpyArrays(
+        scene.geno_model,
+        scene.bind_pos,
+        scene.bind_rot,
+        motion.global_positions[animation_frame],
+        motion.global_rotations[animation_frame],
+    )
+
+    root_trajectory = BuildRootLocalTrajectory(
+        motion.motion_root_trajectory,
+        animation_frame,
+        sampleOffsets=motion.trajectory_sample_offsets,
+    )
+    terrain_root_trajectory_display = BuildTerrainAdaptedRootTrajectoryDisplay(
+        root_trajectory,
+        motion.terrain_adapted_root_trajectory,
+        heightOffset=0.02,
+        alignDirectionsToTerrain=True,
+        alignVelocitiesToTerrain=True,
+    )
+    local_pose = BuildLocalPose(
+        motion.pose_source,
+        motion.motion_root_trajectory,
+        animation_frame,
+        dt=motion.bvh_frame_time,
+    )
+    reconstructed_pose_world = ReconstructPoseWorldSpace(
+        local_pose,
+        integrateRootMotion=debug.integrate_root_motion_ptr[0],
+        dt=motion.bvh_frame_time,
+    )
+
+    pose_comparison_frame = (
+        min(animation_frame + 1, motion.bvh_animation.frame_count - 1)
+        if debug.integrate_root_motion_ptr[0] else
+        animation_frame
+    )
+    pose_comparison_positions = motion.global_positions[pose_comparison_frame]
+    pose_error_label = b"Pred Err(+1)" if debug.integrate_root_motion_ptr[0] else b"Recon Err"
+    local_pose_positions_offset = OffsetPositions(local_pose["local_positions"], debug.local_debug_origin)
+
+    if debug.draw_pose_model_local_ptr[0]:
         UpdateModelPoseFromNumpyArrays(
-            genoModel, bindPos, bindRot, 
-            globalPositions[animationFrame], globalRotations[animationFrame])
-        rootTrajectory = BuildRootLocalTrajectory(
-            motionRootTrajectory,
-            animationFrame,
-            sampleOffsets=trajectorySampleOffsets,
+            scene.pose_model,
+            scene.bind_pos,
+            scene.bind_rot,
+            local_pose_positions_offset,
+            local_pose["local_rotations"],
         )
-        rootTrajectoryDisplay = BuildRootTrajectoryDisplay(
-            rootTrajectory,
-            groundHeight=groundPosition.y,
-            projectToGround=False,
-            heightOffset=0.02,
-            terrainProvider=terrainProvider,
-            projectToTerrain=True,
+    else:
+        UpdateModelPoseFromNumpyArrays(
+            scene.pose_model,
+            scene.bind_pos,
+            scene.bind_rot,
+            reconstructed_pose_world["world_positions"],
+            reconstructed_pose_world["world_rotations"],
         )
-        terrainRootTrajectoryDisplay = BuildTerrainAdaptedRootTrajectoryDisplay(
-            rootTrajectory,
-            terrainAdaptedRootTrajectory,
-            heightOffset=0.02,
-            alignDirectionsToTerrain=True,
-            alignVelocitiesToTerrain=True,
+
+    pose_position_error_mean, pose_position_error_max = ComputePosePositionError(
+        pose_comparison_positions,
+        reconstructed_pose_world["world_positions"],
+    )
+
+    bootstrap_contact_indices = motion.bootstrap_contact_data["joint_indices"]
+    contact_indices = motion.contact_data["joint_indices"]
+    bootstrap_frame_contacts = motion.bootstrap_contact_data["contacts_filtered"][animation_frame]
+    frame_contacts = motion.contact_data["contacts_filtered"][animation_frame]
+
+    bootstrap_pose_contact_positions = (
+        local_pose_positions_offset[bootstrap_contact_indices]
+        if debug.draw_pose_model_local_ptr[0] else
+        reconstructed_pose_world["world_positions"][bootstrap_contact_indices]
+    )
+    pose_contact_positions = (
+        local_pose_positions_offset[contact_indices]
+        if debug.draw_pose_model_local_ptr[0] else
+        reconstructed_pose_world["world_positions"][contact_indices]
+    )
+    pose_focus_position = (
+        local_pose_positions_offset[ROOT_JOINT_INDEX]
+        if debug.draw_pose_model_local_ptr[0] else
+        reconstructed_pose_world["world_positions"][ROOT_JOINT_INDEX]
+    )
+
+    terrain_query_position = reconstructed_pose_world["world_positions"][ROOT_JOINT_INDEX]
+    body_proxy_frame = BuildBodyProxyFrame(
+        motion.global_positions[animation_frame],
+        motion.body_proxy_layout,
+    )
+    penetration_frame = ComputeTerrainPenetrationFrame(
+        body_proxy_frame,
+        motion.terrain_provider,
+    )
+
+    return SimpleNamespace(
+        animation_frame=animation_frame,
+        hip_position=Vector3(*pose_focus_position),
+        root_trajectory=root_trajectory,
+        terrain_root_trajectory_display=terrain_root_trajectory_display,
+        local_pose=local_pose,
+        local_pose_positions_offset=local_pose_positions_offset,
+        reconstructed_pose_world=reconstructed_pose_world,
+        pose_comparison_positions=pose_comparison_positions,
+        pose_error_label=pose_error_label,
+        pose_position_error_mean=pose_position_error_mean,
+        pose_position_error_max=pose_position_error_max,
+        bootstrap_frame_contacts=bootstrap_frame_contacts,
+        bootstrap_bvh_contact_positions=motion.bootstrap_contact_data["positions"][animation_frame],
+        bootstrap_pose_contact_positions=bootstrap_pose_contact_positions,
+        frame_contacts=frame_contacts,
+        bvh_contact_positions=motion.contact_data["positions"][animation_frame],
+        pose_contact_positions=pose_contact_positions,
+        terrain_height_at_focus=motion.terrain_provider.sample_height(terrain_query_position),
+        terrain_normal_at_focus=motion.terrain_adapted_root_trajectory["terrain_normals"][animation_frame],
+        body_proxy_positions=body_proxy_frame["positions"],
+        body_proxy_radii=body_proxy_frame["radii"],
+        penetration_frame=penetration_frame,
+        penetration_count=penetration_frame["penetration_count"],
+        max_penetration_depth=penetration_frame["max_penetration"],
+    )
+
+
+def _update_tracking(app, frame_state):
+    render = app.render
+
+    render.shadow_light.target = Vector3(frame_state.hip_position.x, 0.0, frame_state.hip_position.z)
+    render.shadow_light.position = Vector3Add(
+        render.shadow_light.target,
+        Vector3Scale(render.light_dir, -5.0),
+    )
+
+    app.camera.update(
+        Vector3(frame_state.hip_position.x, 0.75, frame_state.hip_position.z),
+        GetMouseDelta().x if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(0) else 0.0,
+        GetMouseDelta().y if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(0) else 0.0,
+        GetMouseDelta().x if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(1) else 0.0,
+        GetMouseDelta().y if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(1) else 0.0,
+        GetMouseWheelMove(),
+        GetFrameTime(),
+    )
+
+
+def _render_shadow_pass(app):
+    render = app.render
+    shaders = app.shaders
+    scene = app.scene
+    motion = app.motion
+    debug = app.debug
+
+    BeginShadowMap(render.shadow_map, render.shadow_light)
+
+    light_view_proj = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection())
+    light_clip_near_ptr = _make_float_ptr(rlGetCullDistanceNear())
+    light_clip_far_ptr = _make_float_ptr(rlGetCullDistanceFar())
+
+    SetShaderValue(shaders.shadow.program, shaders.shadow.light_clip_near, light_clip_near_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.shadow.program, shaders.shadow.light_clip_far, light_clip_far_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(
+        shaders.skinned_shadow.program,
+        shaders.skinned_shadow.light_clip_near,
+        light_clip_near_ptr,
+        SHADER_UNIFORM_FLOAT,
+    )
+    SetShaderValue(
+        shaders.skinned_shadow.program,
+        shaders.skinned_shadow.light_clip_far,
+        light_clip_far_ptr,
+        SHADER_UNIFORM_FLOAT,
+    )
+
+    if debug.draw_flat_ground_ptr[0]:
+        _draw_model_with_shader(scene.ground_model, shaders.shadow.program, scene.ground_position, WHITE)
+    if debug.draw_terrain_mesh_ptr[0]:
+        _draw_model_with_shader(motion.terrain_model, shaders.shadow.program, Vector3Zero(), WHITE)
+
+    _draw_model_with_shader(scene.geno_model, shaders.skinned_shadow.program, scene.geno_position, WHITE)
+    if debug.draw_reconstructed_pose_ptr[0]:
+        _draw_model_with_shader(scene.pose_model, shaders.skinned_shadow.program, scene.geno_position, WHITE)
+
+    EndShadowMap()
+
+    return SimpleNamespace(
+        view_proj=light_view_proj,
+        clip_near_ptr=light_clip_near_ptr,
+        clip_far_ptr=light_clip_far_ptr,
+    )
+
+
+def _render_gbuffer_pass(app):
+    render = app.render
+    shaders = app.shaders
+    scene = app.scene
+    motion = app.motion
+    debug = app.debug
+
+    BeginGBuffer(render.gbuffer, app.camera.cam3d)
+
+    cam_view = rlGetMatrixModelview()
+    cam_proj = rlGetMatrixProjection()
+    cam_inv_proj = MatrixInvert(cam_proj)
+    cam_inv_view_proj = MatrixInvert(MatrixMultiply(cam_view, cam_proj))
+    cam_clip_near_ptr = _make_float_ptr(rlGetCullDistanceNear())
+    cam_clip_far_ptr = _make_float_ptr(rlGetCullDistanceFar())
+    specularity_ptr = _make_float_ptr(0.5)
+    glossiness_ptr = _make_float_ptr(10.0)
+
+    SetShaderValue(shaders.basic.program, shaders.basic.specularity, specularity_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.basic.program, shaders.basic.glossiness, glossiness_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.basic.program, shaders.basic.cam_clip_near, cam_clip_near_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.basic.program, shaders.basic.cam_clip_far, cam_clip_far_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.skinned_basic.program, shaders.skinned_basic.specularity, specularity_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.skinned_basic.program, shaders.skinned_basic.glossiness, glossiness_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(
+        shaders.skinned_basic.program,
+        shaders.skinned_basic.cam_clip_near,
+        cam_clip_near_ptr,
+        SHADER_UNIFORM_FLOAT,
+    )
+    SetShaderValue(
+        shaders.skinned_basic.program,
+        shaders.skinned_basic.cam_clip_far,
+        cam_clip_far_ptr,
+        SHADER_UNIFORM_FLOAT,
+    )
+
+    if debug.draw_flat_ground_ptr[0]:
+        _draw_model_with_shader(scene.ground_model, shaders.basic.program, scene.ground_position, Color(190, 190, 190, 255))
+    if debug.draw_terrain_mesh_ptr[0]:
+        _draw_model_with_shader(motion.terrain_model, shaders.basic.program, Vector3Zero(), Color(190, 190, 190, 255))
+
+    _draw_model_with_shader(scene.geno_model, shaders.skinned_basic.program, scene.geno_position, Color(220, 220, 220, 255))
+    if debug.draw_reconstructed_pose_ptr[0]:
+        _draw_model_with_shader(
+            scene.pose_model,
+            shaders.skinned_basic.program,
+            scene.geno_position,
+            debug.pose_model_color,
         )
-        localPose = BuildLocalPose(
-            poseSource,
-            motionRootTrajectory,
-            animationFrame,
-            dt=bvhFrameTime,
+
+    EndGBuffer(app.screen_width, app.screen_height)
+
+    return SimpleNamespace(
+        view=cam_view,
+        proj=cam_proj,
+        inv_proj=cam_inv_proj,
+        inv_view_proj=cam_inv_view_proj,
+        clip_near_ptr=cam_clip_near_ptr,
+        clip_far_ptr=cam_clip_far_ptr,
+    )
+
+
+def _render_ssao_and_blur_pass(app, shadow_pass, camera_pass):
+    render = app.render
+    shaders = app.shaders
+
+    BeginTextureMode(render.ssao_front)
+    BeginShaderMode(shaders.ssao.program)
+    SetShaderValueTexture(shaders.ssao.program, shaders.ssao.gbuffer_normal, render.gbuffer.normal)
+    SetShaderValueTexture(shaders.ssao.program, shaders.ssao.gbuffer_depth, render.gbuffer.depth)
+    SetShaderValueMatrix(shaders.ssao.program, shaders.ssao.cam_view, camera_pass.view)
+    SetShaderValueMatrix(shaders.ssao.program, shaders.ssao.cam_proj, camera_pass.proj)
+    SetShaderValueMatrix(shaders.ssao.program, shaders.ssao.cam_inv_proj, camera_pass.inv_proj)
+    SetShaderValueMatrix(shaders.ssao.program, shaders.ssao.cam_inv_view_proj, camera_pass.inv_view_proj)
+    SetShaderValueMatrix(shaders.ssao.program, shaders.ssao.light_view_proj, shadow_pass.view_proj)
+    SetShaderValueShadowMap(shaders.ssao.program, shaders.ssao.shadow_map, render.shadow_map)
+    SetShaderValue(
+        shaders.ssao.program,
+        shaders.ssao.shadow_inv_resolution,
+        ffi.addressof(render.shadow_inv_resolution),
+        SHADER_UNIFORM_VEC2,
+    )
+    SetShaderValue(shaders.ssao.program, shaders.ssao.cam_clip_near, camera_pass.clip_near_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.ssao.program, shaders.ssao.cam_clip_far, camera_pass.clip_far_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.ssao.program, shaders.ssao.light_clip_near, shadow_pass.clip_near_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.ssao.program, shaders.ssao.light_clip_far, shadow_pass.clip_far_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.ssao.program, shaders.ssao.light_dir, ffi.addressof(render.light_dir), SHADER_UNIFORM_VEC3)
+    ClearBackground(WHITE)
+    DrawTextureRec(
+        render.ssao_front.texture,
+        Rectangle(0, 0, render.ssao_front.texture.width, -render.ssao_front.texture.height),
+        Vector2(0.0, 0.0),
+        WHITE,
+    )
+    EndShaderMode()
+    EndTextureMode()
+
+    BeginTextureMode(render.ssao_back)
+    BeginShaderMode(shaders.blur.program)
+    blur_direction = Vector2(1.0, 0.0)
+    blur_inv_texture_resolution = Vector2(
+        1.0 / render.ssao_front.texture.width,
+        1.0 / render.ssao_front.texture.height,
+    )
+    SetShaderValueTexture(shaders.blur.program, shaders.blur.gbuffer_normal, render.gbuffer.normal)
+    SetShaderValueTexture(shaders.blur.program, shaders.blur.gbuffer_depth, render.gbuffer.depth)
+    SetShaderValueTexture(shaders.blur.program, shaders.blur.input_texture, render.ssao_front.texture)
+    SetShaderValueMatrix(shaders.blur.program, shaders.blur.cam_inv_proj, camera_pass.inv_proj)
+    SetShaderValue(shaders.blur.program, shaders.blur.cam_clip_near, camera_pass.clip_near_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.blur.program, shaders.blur.cam_clip_far, camera_pass.clip_far_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(
+        shaders.blur.program,
+        shaders.blur.inv_texture_resolution,
+        ffi.addressof(blur_inv_texture_resolution),
+        SHADER_UNIFORM_VEC2,
+    )
+    SetShaderValue(shaders.blur.program, shaders.blur.blur_direction, ffi.addressof(blur_direction), SHADER_UNIFORM_VEC2)
+    DrawTextureRec(
+        render.ssao_back.texture,
+        Rectangle(0, 0, render.ssao_back.texture.width, -render.ssao_back.texture.height),
+        Vector2(0, 0),
+        WHITE,
+    )
+    EndShaderMode()
+    EndTextureMode()
+
+    BeginTextureMode(render.ssao_front)
+    BeginShaderMode(shaders.blur.program)
+    blur_direction = Vector2(0.0, 1.0)
+    SetShaderValueTexture(shaders.blur.program, shaders.blur.input_texture, render.ssao_back.texture)
+    SetShaderValue(shaders.blur.program, shaders.blur.blur_direction, ffi.addressof(blur_direction), SHADER_UNIFORM_VEC2)
+    DrawTextureRec(
+        render.ssao_front.texture,
+        Rectangle(0, 0, render.ssao_front.texture.width, -render.ssao_front.texture.height),
+        Vector2(0, 0),
+        WHITE,
+    )
+    EndShaderMode()
+    EndTextureMode()
+
+
+def _draw_debug_overlay(app, frame_state):
+    debug = app.debug
+    motion = app.motion
+
+    BeginMode3D(app.camera.cam3d)
+
+    if debug.draw_bone_transforms_ptr[0]:
+        DrawSkeleton(
+            motion.global_positions[frame_state.animation_frame],
+            motion.global_rotations[frame_state.animation_frame],
+            motion.parents,
+            GRAY,
         )
-        reconstructedPoseWorld = ReconstructPoseWorldSpace(
-            localPose,
-            integrateRootMotion=integrateRootMotionPtr[0],
-            dt=bvhFrameTime,
+
+        if debug.draw_reconstructed_pose_ptr[0]:
+            if debug.draw_pose_model_local_ptr[0]:
+                DrawSkeleton(
+                    frame_state.local_pose_positions_offset,
+                    frame_state.local_pose["local_rotations"],
+                    motion.parents,
+                    debug.pose_model_color,
+                )
+            else:
+                DrawSkeleton(
+                    frame_state.reconstructed_pose_world["world_positions"],
+                    frame_state.reconstructed_pose_world["world_rotations"],
+                    motion.parents,
+                    debug.pose_model_color,
+                )
+
+    if debug.draw_root_trajectory_ptr[0]:
+        DrawRootTrajectoryDebug(
+            frame_state.terrain_root_trajectory_display["world_positions"],
+            frame_state.terrain_root_trajectory_display["world_directions"],
+            frame_state.terrain_root_trajectory_display["world_velocities"],
+            frame_state.root_trajectory["sample_offsets"],
+            drawDirection=debug.draw_trajectory_directions_ptr[0],
+            drawVelocity=debug.draw_trajectory_velocity_ptr[0],
         )
-        poseComparisonFrame = (
-            min(animationFrame + 1, bvhAnimation.frame_count - 1)
-            if integrateRootMotionPtr[0] else
-            animationFrame
-        )
-        poseComparisonPositions = globalPositions[poseComparisonFrame]
-        poseErrorLabel = b"Pred Err(+1)" if integrateRootMotionPtr[0] else b"Recon Err"
-        if drawPoseModelLocalPtr[0]:
-            UpdateModelPoseFromNumpyArrays(
-                poseModel, bindPos, bindRot,
-                OffsetPositions(localPose["local_positions"], localDebugOrigin),
-                localPose["local_rotations"])
-        else:
-            UpdateModelPoseFromNumpyArrays(
-                poseModel, bindPos, bindRot,
-                reconstructedPoseWorld["world_positions"], reconstructedPoseWorld["world_rotations"])
-        posePositionErrorMean, posePositionErrorMax = ComputePosePositionError(
-            poseComparisonPositions,
-            reconstructedPoseWorld["world_positions"],
-        )
-        bootstrapFrameContacts = bootstrapContactData["contacts_filtered"][animationFrame]
-        bootstrapContactIndices = bootstrapContactData["joint_indices"]
-        bootstrapBvhContactPositions = bootstrapContactData["positions"][animationFrame]
-        bootstrapPoseContactPositions = (
-            OffsetPositions(localPose["local_positions"][bootstrapContactIndices], localDebugOrigin)
-            if drawPoseModelLocalPtr[0] else
-            reconstructedPoseWorld["world_positions"][bootstrapContactIndices]
-        )
-        frameContacts = contactData["contacts_filtered"][animationFrame]
-        contactIndices = contactData["joint_indices"]
-        bvhContactPositions = contactData["positions"][animationFrame]
-        poseContactPositions = (
-            OffsetPositions(localPose["local_positions"][contactIndices], localDebugOrigin)
-            if drawPoseModelLocalPtr[0] else
-            reconstructedPoseWorld["world_positions"][contactIndices]
-        )
-        poseFocusPosition = (
-            OffsetPositions(localPose["local_positions"], localDebugOrigin)[ROOT_JOINT_INDEX]
-            if drawPoseModelLocalPtr[0] else
-            reconstructedPoseWorld["world_positions"][ROOT_JOINT_INDEX]
-        )
-        terrainQueryPosition = reconstructedPoseWorld["world_positions"][ROOT_JOINT_INDEX]
-        terrainHeightAtFocus = terrainProvider.sample_height(terrainQueryPosition)
-        terrainNormalAtFocus = terrainAdaptedRootTrajectory["terrain_normals"][animationFrame]
-        bodyProxyFrame = BuildBodyProxyFrame(
-            globalPositions[animationFrame],
-            bodyProxyLayout,
-        )
-        bodyProxyPositions = bodyProxyFrame["positions"]
-        bodyProxyRadii = bodyProxyFrame["radii"]
-        penetrationFrame = ComputeTerrainPenetrationFrame(
-            bodyProxyFrame,
-            terrainProvider,
-        )
-        penetrationCount = penetrationFrame["penetration_count"]
-        maxPenetrationDepth = penetrationFrame["max_penetration"]
 
-        # Shadow Light Tracks Character
-        
-        hipPosition = Vector3(*poseFocusPosition)
-        
-        shadowLight.target = Vector3(hipPosition.x, 0.0, hipPosition.z)
-        shadowLight.position = Vector3Add(shadowLight.target, Vector3Scale(lightDir, -5.0))
-
-        # Update Camera
-        
-        camera.update(
-            Vector3(hipPosition.x, 0.75, hipPosition.z),
-            GetMouseDelta().x if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(0) else 0.0,
-            GetMouseDelta().y if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(0) else 0.0,
-            GetMouseDelta().x if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(1) else 0.0,
-            GetMouseDelta().y if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(1) else 0.0,
-            GetMouseWheelMove(),
-            GetFrameTime())
-        
-        # Render
-        
-        rlDisableColorBlend()
-        
-        BeginDrawing()
-        
-        # Render Shadow Maps
-        
-        BeginShadowMap(shadowMap, shadowLight)  
-        
-        lightViewProj = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection())
-        lightClipNear = rlGetCullDistanceNear()
-        lightClipFar = rlGetCullDistanceFar()
-
-        lightClipNearPtr = ffi.new("float*"); lightClipNearPtr[0] = lightClipNear
-        lightClipFarPtr = ffi.new("float*"); lightClipFarPtr[0] = lightClipFar
-        
-        SetShaderValue(shadowShader, shadowShaderLightClipNear, lightClipNearPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(shadowShader, shadowShaderLightClipFar, lightClipFarPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(skinnedShadowShader, skinnedShadowShaderLightClipNear, lightClipNearPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(skinnedShadowShader, skinnedShadowShaderLightClipFar, lightClipFarPtr, SHADER_UNIFORM_FLOAT)
-        
-        if drawFlatGroundPtr[0]:
-            groundModel.materials[0].shader = shadowShader
-            DrawModel(groundModel, groundPosition, 1.0, WHITE)
-
-        if drawTerrainMeshPtr[0]:
-            terrainModel.materials[0].shader = shadowShader
-            DrawModel(terrainModel, Vector3Zero(), 1.0, WHITE)
-        
-        genoModel.materials[0].shader = skinnedShadowShader
-        DrawModel(genoModel, genoPosition, 1.0, WHITE)
-
-        if drawReconstructedPosePtr[0]:
-            poseModel.materials[0].shader = skinnedShadowShader
-            DrawModel(poseModel, genoPosition, 1.0, WHITE)
-        
-        EndShadowMap()
-        
-        # Render GBuffer
-        
-        BeginGBuffer(gbuffer, camera.cam3d)
-        
-        camView = rlGetMatrixModelview()
-        camProj = rlGetMatrixProjection()
-        camInvProj = MatrixInvert(camProj)
-        camInvViewProj = MatrixInvert(MatrixMultiply(camView, camProj))
-        camClipNear = rlGetCullDistanceNear()
-        camClipFar = rlGetCullDistanceFar()
-
-        camClipNearPtr = ffi.new("float*"); camClipNearPtr[0] = camClipNear
-        camClipFarPtr = ffi.new("float*"); camClipFarPtr[0] = camClipFar
-
-        specularityPtr = ffi.new('float*'); specularityPtr[0] = 0.5
-        glossinessPtr = ffi.new('float*'); glossinessPtr[0] = 10.0
-        
-        SetShaderValue(basicShader, basicShaderSpecularity, specularityPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(basicShader, basicShaderGlossiness, glossinessPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(basicShader, basicShaderCamClipNear, camClipNearPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(basicShader, basicShaderCamClipFar, camClipFarPtr, SHADER_UNIFORM_FLOAT)
-        
-        SetShaderValue(skinnedBasicShader, skinnedBasicShaderSpecularity, specularityPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(skinnedBasicShader, skinnedBasicShaderGlossiness, glossinessPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(skinnedBasicShader, skinnedBasicShaderCamClipNear, camClipNearPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(skinnedBasicShader, skinnedBasicShaderCamClipFar, camClipFarPtr, SHADER_UNIFORM_FLOAT)        
-        
-        if drawFlatGroundPtr[0]:
-            groundModel.materials[0].shader = basicShader
-            DrawModel(groundModel, groundPosition, 1.0, Color(190, 190, 190, 255))
-
-        if drawTerrainMeshPtr[0]:
-            terrainModel.materials[0].shader = basicShader
-            DrawModel(terrainModel, Vector3Zero(), 1.0, Color(190, 190, 190, 255))
-        
-        genoModel.materials[0].shader = skinnedBasicShader
-        DrawModel(genoModel, genoPosition, 1.0, Color(220, 220, 220, 255))
-
-        if drawReconstructedPosePtr[0]:
-            poseModel.materials[0].shader = skinnedBasicShader
-            DrawModel(poseModel, genoPosition, 1.0, poseModelColor)
-        
-        EndGBuffer(screenWidth, screenHeight)
-        
-        # Render SSAO and Shadows
-        
-        BeginTextureMode(ssaoFront)
-        
-        BeginShaderMode(ssaoShader)
-        
-        SetShaderValueTexture(ssaoShader, ssaoShaderGBufferNormal, gbuffer.normal)
-        SetShaderValueTexture(ssaoShader, ssaoShaderGBufferDepth, gbuffer.depth)
-        SetShaderValueMatrix(ssaoShader, ssaoShaderCamView, camView)
-        SetShaderValueMatrix(ssaoShader, ssaoShaderCamProj, camProj)
-        SetShaderValueMatrix(ssaoShader, ssaoShaderCamInvProj, camInvProj)
-        SetShaderValueMatrix(ssaoShader, ssaoShaderCamInvViewProj, camInvViewProj)
-        SetShaderValueMatrix(ssaoShader, ssaoShaderLightViewProj, lightViewProj)
-        SetShaderValueShadowMap(ssaoShader, ssaoShaderShadowMap, shadowMap)
-        SetShaderValue(ssaoShader, ssaoShaderShadowInvResolution, ffi.addressof(shadowInvResolution), SHADER_UNIFORM_VEC2)
-        SetShaderValue(ssaoShader, ssaoShaderCamClipNear, camClipNearPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(ssaoShader, ssaoShaderCamClipFar, camClipFarPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(ssaoShader, ssaoShaderLightClipNear, lightClipNearPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(ssaoShader, ssaoShaderLightClipFar, lightClipFarPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(ssaoShader, ssaoShaderLightDir, ffi.addressof(lightDir), SHADER_UNIFORM_VEC3)
-        
-        ClearBackground(WHITE)
-        
-        DrawTextureRec(
-            ssaoFront.texture,
-            Rectangle(0, 0, ssaoFront.texture.width, -ssaoFront.texture.height),
-            Vector2(0.0, 0.0),
-            WHITE)
-
-        EndShaderMode()
-
-        EndTextureMode()
-        
-        # Blur Horizontal
-        
-        BeginTextureMode(ssaoBack)
-        
-        BeginShaderMode(blurShader)
-        
-        blurDirection = Vector2(1.0, 0.0)
-        blurInvTextureResolution = Vector2(1.0 / ssaoFront.texture.width, 1.0 / ssaoFront.texture.height)
-        
-        SetShaderValueTexture(blurShader, blurShaderGBufferNormal, gbuffer.normal)
-        SetShaderValueTexture(blurShader, blurShaderGBufferDepth, gbuffer.depth)
-        SetShaderValueTexture(blurShader, blurShaderInputTexture, ssaoFront.texture)
-        SetShaderValueMatrix(blurShader, blurShaderCamInvProj, camInvProj)
-        SetShaderValue(blurShader, blurShaderCamClipNear, camClipNearPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(blurShader, blurShaderCamClipFar, camClipFarPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(blurShader, blurShaderInvTextureResolution, ffi.addressof(blurInvTextureResolution), SHADER_UNIFORM_VEC2)
-        SetShaderValue(blurShader, blurShaderBlurDirection, ffi.addressof(blurDirection), SHADER_UNIFORM_VEC2)
-
-        DrawTextureRec(
-            ssaoBack.texture,
-            Rectangle(0, 0, ssaoBack.texture.width, -ssaoBack.texture.height),
-            Vector2(0, 0),
-            WHITE)
-
-        EndShaderMode()
-
-        EndTextureMode()
-      
-        # Blur Vertical
-        
-        BeginTextureMode(ssaoFront)
-        
-        BeginShaderMode(blurShader)
-        
-        blurDirection = Vector2(0.0, 1.0)
-        
-        SetShaderValueTexture(blurShader, blurShaderInputTexture, ssaoBack.texture)
-        SetShaderValue(blurShader, blurShaderBlurDirection, ffi.addressof(blurDirection), SHADER_UNIFORM_VEC2)
-
-        DrawTextureRec(
-            ssaoFront.texture,
-            Rectangle(0, 0, ssaoFront.texture.width, -ssaoFront.texture.height),
-            Vector2(0, 0),
-            WHITE)
-
-        EndShaderMode()
-
-        EndTextureMode()
-      
-        # Light GBuffer
-        
-        BeginTextureMode(lighted)
-        
-        BeginShaderMode(lightingShader)
-        
-        sunColor = Vector3(253.0 / 255.0, 255.0 / 255.0, 232.0 / 255.0)
-        sunStrengthPtr = ffi.new('float*'); sunStrengthPtr[0] = 0.25
-        skyColor = Vector3(174.0 / 255.0, 183.0 / 255.0, 190.0 / 255.0)
-        skyStrengthPtr = ffi.new('float*'); skyStrengthPtr[0] = 0.15
-        groundStrengthPtr = ffi.new('float*'); groundStrengthPtr[0] = 0.1
-        ambientStrengthPtr = ffi.new('float*'); ambientStrengthPtr[0] = 1.0
-        exposurePtr = ffi.new('float*'); exposurePtr[0] = 0.9
-        
-        SetShaderValueTexture(lightingShader, lightingShaderGBufferColor, gbuffer.color)
-        SetShaderValueTexture(lightingShader, lightingShaderGBufferNormal, gbuffer.normal)
-        SetShaderValueTexture(lightingShader, lightingShaderGBufferDepth, gbuffer.depth)
-        SetShaderValueTexture(lightingShader, lightingShaderSSAO, ssaoFront.texture)
-        SetShaderValue(lightingShader, lightingShaderCamPos, ffi.addressof(camera.cam3d.position), SHADER_UNIFORM_VEC3)
-        SetShaderValueMatrix(lightingShader, lightingShaderCamInvViewProj, camInvViewProj)
-        SetShaderValue(lightingShader, lightingShaderLightDir, ffi.addressof(lightDir), SHADER_UNIFORM_VEC3)
-        SetShaderValue(lightingShader, lightingShaderSunColor, ffi.addressof(sunColor), SHADER_UNIFORM_VEC3)
-        SetShaderValue(lightingShader, lightingShaderSunStrength, sunStrengthPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(lightingShader, lightingShaderSkyColor, ffi.addressof(skyColor), SHADER_UNIFORM_VEC3)
-        SetShaderValue(lightingShader, lightingShaderSkyStrength, skyStrengthPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(lightingShader, lightingShaderGroundStrength, groundStrengthPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(lightingShader, lightingShaderAmbientStrength, ambientStrengthPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(lightingShader, lightingShaderExposure, exposurePtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(lightingShader, lightingShaderCamClipNear, camClipNearPtr, SHADER_UNIFORM_FLOAT)
-        SetShaderValue(lightingShader, lightingShaderCamClipFar, camClipFarPtr, SHADER_UNIFORM_FLOAT)
-        
-        ClearBackground(RAYWHITE)
-        
-        DrawTextureRec(
-            gbuffer.color,
-            Rectangle(0, 0, gbuffer.color.width, -gbuffer.color.height),
-            Vector2(0, 0),
-            WHITE)
-        
-        EndShaderMode()        
-        
-        # Debug Draw
-        
-        BeginMode3D(camera.cam3d)
-
-        if drawBoneTransformsPtr[0]:
-            DrawSkeleton(
-                globalPositions[animationFrame], 
-                globalRotations[animationFrame], 
-                parents, GRAY)
-
-            if drawReconstructedPosePtr[0]:
-                if drawPoseModelLocalPtr[0]:
-                    DrawSkeleton(
-                        OffsetPositions(localPose["local_positions"], localDebugOrigin),
-                        localPose["local_rotations"],
-                        parents,
-                        poseModelColor)
-                else:
-                    DrawSkeleton(
-                        reconstructedPoseWorld["world_positions"],
-                        reconstructedPoseWorld["world_rotations"],
-                        parents,
-                        poseModelColor)
-
-        if drawRootTrajectoryPtr[0]:
+        if debug.draw_reconstructed_pose_ptr[0] and debug.draw_pose_model_local_ptr[0]:
             DrawRootTrajectoryDebug(
-                terrainRootTrajectoryDisplay["world_positions"],
-                terrainRootTrajectoryDisplay["world_directions"],
-                terrainRootTrajectoryDisplay["world_velocities"],
-                rootTrajectory["sample_offsets"],
-                drawDirection=drawTrajectoryDirectionsPtr[0],
-                drawVelocity=drawTrajectoryVelocityPtr[0],
+                OffsetPositions(frame_state.root_trajectory["local_positions"], debug.local_debug_origin),
+                frame_state.root_trajectory["local_directions"],
+                frame_state.root_trajectory["local_velocities"],
+                frame_state.root_trajectory["sample_offsets"],
+                drawDirection=debug.draw_trajectory_directions_ptr[0],
+                drawVelocity=debug.draw_trajectory_velocity_ptr[0],
             )
 
-            if drawReconstructedPosePtr[0] and drawPoseModelLocalPtr[0]:
-                DrawRootTrajectoryDebug(
-                    OffsetPositions(rootTrajectory["local_positions"], localDebugOrigin),
-                    rootTrajectory["local_directions"],
-                    rootTrajectory["local_velocities"],
-                    rootTrajectory["sample_offsets"],
-                    drawDirection=drawTrajectoryDirectionsPtr[0],
-                    drawVelocity=drawTrajectoryVelocityPtr[0],
-                )
+    if debug.draw_contacts_ptr[0]:
+        DrawContactStates(frame_state.bvh_contact_positions, frame_state.frame_contacts)
+        if debug.draw_reconstructed_pose_ptr[0]:
+            DrawContactStates(frame_state.pose_contact_positions, frame_state.frame_contacts)
 
-        if drawContactsPtr[0]:
+    if debug.draw_bootstrap_contacts_ptr[0]:
+        DrawContactStates(
+            frame_state.bootstrap_bvh_contact_positions,
+            frame_state.bootstrap_frame_contacts,
+            activeColor=Color(150, 110, 60, 255),
+            inactiveColor=Color(210, 190, 160, 255),
+            activeSize=0.04,
+            inactiveSize=0.04,
+        )
+        if debug.draw_reconstructed_pose_ptr[0]:
             DrawContactStates(
-                bvhContactPositions,
-                frameContacts,
-            )
-
-            if drawReconstructedPosePtr[0]:
-                DrawContactStates(
-                    poseContactPositions,
-                    frameContacts,
-                )
-
-        if drawBootstrapContactsPtr[0]:
-            DrawContactStates(
-                bootstrapBvhContactPositions,
-                bootstrapFrameContacts,
+                frame_state.bootstrap_pose_contact_positions,
+                frame_state.bootstrap_frame_contacts,
                 activeColor=Color(150, 110, 60, 255),
                 inactiveColor=Color(210, 190, 160, 255),
                 activeSize=0.04,
                 inactiveSize=0.04,
             )
 
-            if drawReconstructedPosePtr[0]:
-                DrawContactStates(
-                    bootstrapPoseContactPositions,
-                    bootstrapFrameContacts,
-                    activeColor=Color(150, 110, 60, 255),
-                    inactiveColor=Color(210, 190, 160, 255),
-                    activeSize=0.04,
-                    inactiveSize=0.04,
-                )
+    if debug.draw_terrain_samples_ptr[0]:
+        DrawTerrainSamples(motion.terrain_provider.sample_positions)
 
-        if drawTerrainSamplesPtr[0]:
-            DrawTerrainSamples(terrainProvider.sample_positions)
+    if debug.draw_terrain_normals_ptr[0]:
+        DrawTerrainNormals(
+            motion.terrain_provider.sample_positions,
+            motion.terrain_sample_normals,
+        )
 
-        if drawTerrainNormalsPtr[0]:
-            DrawTerrainNormals(
-                terrainProvider.sample_positions,
-                terrainSampleNormals,
-            )
+    if debug.draw_body_proxy_ptr[0]:
+        DrawBodyProxyFrame(frame_state.body_proxy_positions, frame_state.body_proxy_radii)
 
-        if drawBodyProxyPtr[0]:
-            DrawBodyProxyFrame(
-                bodyProxyPositions,
-                bodyProxyRadii,
-            )
+    if debug.draw_terrain_penetration_ptr[0]:
+        DrawTerrainPenetrationFrame(frame_state.body_proxy_positions, frame_state.penetration_frame)
 
-        if drawTerrainPenetrationPtr[0]:
-            DrawTerrainPenetrationFrame(
-                bodyProxyPositions,
-                penetrationFrame,
-            )
+    if debug.draw_reconstruction_error_ptr[0]:
+        DrawPoseReconstructionError(
+            frame_state.pose_comparison_positions,
+            frame_state.reconstructed_pose_world["world_positions"],
+            MAGENTA,
+        )
 
-        if drawReconstructionErrorPtr[0]:
-            DrawPoseReconstructionError(
-                poseComparisonPositions,
-                reconstructedPoseWorld["world_positions"],
-                MAGENTA)
-  
-        EndMode3D()
+    EndMode3D()
 
-        EndTextureMode()
-        
-        # Render Final with FXAA
-        
-        BeginShaderMode(fxaaShader)
 
-        fxaaInvTextureResolution = Vector2(1.0 / lighted.texture.width, 1.0 / lighted.texture.height)
-        
-        SetShaderValueTexture(fxaaShader, fxaaShaderInputTexture, lighted.texture)
-        SetShaderValue(fxaaShader, fxaaShaderInvTextureResolution, ffi.addressof(fxaaInvTextureResolution), SHADER_UNIFORM_VEC2)
-        
-        DrawTextureRec(
-            lighted.texture,
-            Rectangle(0, 0, lighted.texture.width, -lighted.texture.height),
-            Vector2(0, 0),
-            WHITE)
-        
-        EndShaderMode()
-  
-        # UI
-  
-        rlEnableColorBlend()
-  
-        GuiGroupBox(Rectangle(20, 10, 190, 180), b"Camera")
+def _render_lighting_and_debug_pass(app, camera_pass, frame_state):
+    render = app.render
+    shaders = app.shaders
 
-        GuiLabel(Rectangle(30, 20, 150, 20), b"Ctrl + Left Click - Rotate")
-        GuiLabel(Rectangle(30, 40, 150, 20), b"Ctrl + Right Click - Pan")
-        GuiLabel(Rectangle(30, 60, 150, 20), b"Mouse Scroll - Zoom")
-        GuiLabel(Rectangle(30, 80, 150, 20), b"Target: [% 5.3f % 5.3f % 5.3f]" % (camera.cam3d.target.x, camera.cam3d.target.y, camera.cam3d.target.z))
-        GuiLabel(Rectangle(30, 100, 150, 20), b"Offset: [% 5.3f % 5.3f % 5.3f]" % (camera.offset.x, camera.offset.y, camera.offset.z))
-        GuiLabel(Rectangle(30, 120, 150, 20), b"Azimuth: %5.3f" % camera.azimuth)
-        GuiLabel(Rectangle(30, 140, 150, 20), b"Altitude: %5.3f" % camera.altitude)
-        GuiLabel(Rectangle(30, 160, 150, 20), b"Distance: %5.3f" % camera.distance)
-  
-        GuiGroupBox(Rectangle(screenWidth - 260, 10, 240, 580), b"Rendering")
+    BeginTextureMode(render.lighted)
+    BeginShaderMode(shaders.lighting.program)
 
-        GuiCheckBox(Rectangle(screenWidth - 250, 20, 20, 20), b"Draw Transforms", drawBoneTransformsPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 45, 20, 20), b"Draw Flat Ground", drawFlatGroundPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 70, 20, 20), b"Draw Terrain Mesh", drawTerrainMeshPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 95, 20, 20), b"Draw Root Trajectory", drawRootTrajectoryPtr)
-        GuiLabel(Rectangle(screenWidth - 250, 120, 220, 20), b"Terrain-Aware Root/Pose: On")
-        GuiCheckBox(Rectangle(screenWidth - 250, 145, 20, 20), b"Draw Directions", drawTrajectoryDirectionsPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 170, 20, 20), b"Draw Velocity", drawTrajectoryVelocityPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 195, 20, 20), b"Draw Contacts", drawContactsPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 220, 20, 20), b"Draw Bootstrap Contacts", drawBootstrapContactsPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 245, 20, 20), b"Draw Terrain Samples", drawTerrainSamplesPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 270, 20, 20), b"Draw Terrain Normals", drawTerrainNormalsPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 295, 20, 20), b"Draw Body Proxy", drawBodyProxyPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 320, 20, 20), b"Draw Penetration", drawTerrainPenetrationPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 345, 20, 20), b"Draw Blue Geno", drawReconstructedPosePtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 370, 20, 20), b"Blue Geno Local", drawPoseModelLocalPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 395, 20, 20), b"Draw Reconstruction Error", drawReconstructionErrorPtr)
-        GuiCheckBox(Rectangle(screenWidth - 250, 420, 20, 20), b"Integrate Root Motion", integrateRootMotionPtr)
-        GuiLabel(Rectangle(screenWidth - 250, 440, 220, 20), b"Trajectory Projection: Terrain")
-        GuiLabel(Rectangle(screenWidth - 250, 460, 220, 20), b"Terrain Grid: %d x %d" % (
-            terrainHeightGrid["num_x"],
-            terrainHeightGrid["num_z"],
-        ))
-        GuiLabel(Rectangle(screenWidth - 250, 480, 220, 20), b"Terrain H: %.4f" % terrainHeightAtFocus)
-        GuiLabel(Rectangle(screenWidth - 250, 500, 220, 20), b"Terrain Samples: %d" % len(terrainProvider.sample_positions))
-        GuiLabel(Rectangle(screenWidth - 250, 520, 220, 20), b"Terrain N: [% .2f % .2f % .2f]" % (
-            terrainNormalAtFocus[0],
-            terrainNormalAtFocus[1],
-            terrainNormalAtFocus[2],
-        ))
-        GuiLabel(Rectangle(screenWidth - 250, 540, 220, 20), b"Pen: %d max %.4f" % (
-            penetrationCount,
-            maxPenetrationDepth,
-        ))
-        GuiLabel(Rectangle(screenWidth - 250, 560, 220, 20), b"%s: mean %.6f max %.6f" % (
-            poseErrorLabel,
-            posePositionErrorMean,
-            posePositionErrorMax))
+    sun_color = Vector3(253.0 / 255.0, 255.0 / 255.0, 232.0 / 255.0)
+    sun_strength_ptr = _make_float_ptr(0.25)
+    sky_color = Vector3(174.0 / 255.0, 183.0 / 255.0, 190.0 / 255.0)
+    sky_strength_ptr = _make_float_ptr(0.15)
+    ground_strength_ptr = _make_float_ptr(0.1)
+    ambient_strength_ptr = _make_float_ptr(1.0)
+    exposure_ptr = _make_float_ptr(0.9)
 
-        playback.draw_ui(screenWidth, screenHeight)
+    SetShaderValueTexture(shaders.lighting.program, shaders.lighting.gbuffer_color, render.gbuffer.color)
+    SetShaderValueTexture(shaders.lighting.program, shaders.lighting.gbuffer_normal, render.gbuffer.normal)
+    SetShaderValueTexture(shaders.lighting.program, shaders.lighting.gbuffer_depth, render.gbuffer.depth)
+    SetShaderValueTexture(shaders.lighting.program, shaders.lighting.ssao, render.ssao_front.texture)
+    SetShaderValue(
+        shaders.lighting.program,
+        shaders.lighting.cam_pos,
+        ffi.addressof(app.camera.cam3d.position),
+        SHADER_UNIFORM_VEC3,
+    )
+    SetShaderValueMatrix(shaders.lighting.program, shaders.lighting.cam_inv_view_proj, camera_pass.inv_view_proj)
+    SetShaderValue(shaders.lighting.program, shaders.lighting.light_dir, ffi.addressof(render.light_dir), SHADER_UNIFORM_VEC3)
+    SetShaderValue(shaders.lighting.program, shaders.lighting.sun_color, ffi.addressof(sun_color), SHADER_UNIFORM_VEC3)
+    SetShaderValue(shaders.lighting.program, shaders.lighting.sun_strength, sun_strength_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.lighting.program, shaders.lighting.sky_color, ffi.addressof(sky_color), SHADER_UNIFORM_VEC3)
+    SetShaderValue(shaders.lighting.program, shaders.lighting.sky_strength, sky_strength_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.lighting.program, shaders.lighting.ground_strength, ground_strength_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.lighting.program, shaders.lighting.ambient_strength, ambient_strength_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.lighting.program, shaders.lighting.exposure, exposure_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.lighting.program, shaders.lighting.cam_clip_near, camera_pass.clip_near_ptr, SHADER_UNIFORM_FLOAT)
+    SetShaderValue(shaders.lighting.program, shaders.lighting.cam_clip_far, camera_pass.clip_far_ptr, SHADER_UNIFORM_FLOAT)
 
-  
-        EndDrawing()
+    ClearBackground(RAYWHITE)
+    DrawTextureRec(
+        render.gbuffer.color,
+        Rectangle(0, 0, render.gbuffer.color.width, -render.gbuffer.color.height),
+        Vector2(0, 0),
+        WHITE,
+    )
 
-    UnloadRenderTexture(lighted)
-    UnloadRenderTexture(ssaoBack)
-    UnloadRenderTexture(ssaoFront)
-    UnloadRenderTexture(lighted)
-    UnloadGBuffer(gbuffer)
+    EndShaderMode()
+    _draw_debug_overlay(app, frame_state)
+    EndTextureMode()
 
-    UnloadShadowMap(shadowMap)
-    
-    UnloadModel(terrainModel)
-    UnloadModel(poseModel)
-    UnloadModel(genoModel)
-    UnloadModel(groundModel)
-    
-    UnloadShader(fxaaShader)    
-    UnloadShader(blurShader)    
-    UnloadShader(ssaoShader) 
-    UnloadShader(lightingShader)    
-    UnloadShader(basicShader)
-    UnloadShader(skinnedBasicShader)
-    UnloadShader(skinnedShadowShader)
-    UnloadShader(shadowShader)
-    
-    CloseWindow()
+
+def _render_final_pass(app):
+    render = app.render
+    fxaa_inv_texture_resolution = Vector2(
+        1.0 / render.lighted.texture.width,
+        1.0 / render.lighted.texture.height,
+    )
+
+    BeginShaderMode(app.shaders.fxaa.program)
+    SetShaderValueTexture(app.shaders.fxaa.program, app.shaders.fxaa.input_texture, render.lighted.texture)
+    SetShaderValue(
+        app.shaders.fxaa.program,
+        app.shaders.fxaa.inv_texture_resolution,
+        ffi.addressof(fxaa_inv_texture_resolution),
+        SHADER_UNIFORM_VEC2,
+    )
+    DrawTextureRec(
+        render.lighted.texture,
+        Rectangle(0, 0, render.lighted.texture.width, -render.lighted.texture.height),
+        Vector2(0, 0),
+        WHITE,
+    )
+    EndShaderMode()
+
+
+def _draw_ui(app, frame_state):
+    debug = app.debug
+    motion = app.motion
+    screen_width = app.screen_width
+    screen_height = app.screen_height
+
+    GuiGroupBox(Rectangle(20, 10, 190, 180), b"Camera")
+    GuiLabel(Rectangle(30, 20, 150, 20), b"Ctrl + Left Click - Rotate")
+    GuiLabel(Rectangle(30, 40, 150, 20), b"Ctrl + Right Click - Pan")
+    GuiLabel(Rectangle(30, 60, 150, 20), b"Mouse Scroll - Zoom")
+    GuiLabel(
+        Rectangle(30, 80, 150, 20),
+        b"Target: [% 5.3f % 5.3f % 5.3f]" % (
+            app.camera.cam3d.target.x,
+            app.camera.cam3d.target.y,
+            app.camera.cam3d.target.z,
+        ),
+    )
+    GuiLabel(
+        Rectangle(30, 100, 150, 20),
+        b"Offset: [% 5.3f % 5.3f % 5.3f]" % (
+            app.camera.offset.x,
+            app.camera.offset.y,
+            app.camera.offset.z,
+        ),
+    )
+    GuiLabel(Rectangle(30, 120, 150, 20), b"Azimuth: %5.3f" % app.camera.azimuth)
+    GuiLabel(Rectangle(30, 140, 150, 20), b"Altitude: %5.3f" % app.camera.altitude)
+    GuiLabel(Rectangle(30, 160, 150, 20), b"Distance: %5.3f" % app.camera.distance)
+
+    GuiGroupBox(Rectangle(screen_width - 260, 10, 240, 580), b"Rendering")
+    GuiCheckBox(Rectangle(screen_width - 250, 20, 20, 20), b"Draw Transforms", debug.draw_bone_transforms_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 45, 20, 20), b"Draw Flat Ground", debug.draw_flat_ground_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 70, 20, 20), b"Draw Terrain Mesh", debug.draw_terrain_mesh_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 95, 20, 20), b"Draw Root Trajectory", debug.draw_root_trajectory_ptr)
+    GuiLabel(Rectangle(screen_width - 250, 120, 220, 20), b"Terrain-Aware Root/Pose: On")
+    GuiCheckBox(Rectangle(screen_width - 250, 145, 20, 20), b"Draw Directions", debug.draw_trajectory_directions_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 170, 20, 20), b"Draw Velocity", debug.draw_trajectory_velocity_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 195, 20, 20), b"Draw Contacts", debug.draw_contacts_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 220, 20, 20), b"Draw Bootstrap Contacts", debug.draw_bootstrap_contacts_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 245, 20, 20), b"Draw Terrain Samples", debug.draw_terrain_samples_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 270, 20, 20), b"Draw Terrain Normals", debug.draw_terrain_normals_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 295, 20, 20), b"Draw Body Proxy", debug.draw_body_proxy_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 320, 20, 20), b"Draw Penetration", debug.draw_terrain_penetration_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 345, 20, 20), b"Draw Blue Geno", debug.draw_reconstructed_pose_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 370, 20, 20), b"Blue Geno Local", debug.draw_pose_model_local_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 395, 20, 20), b"Draw Reconstruction Error", debug.draw_reconstruction_error_ptr)
+    GuiCheckBox(Rectangle(screen_width - 250, 420, 20, 20), b"Integrate Root Motion", debug.integrate_root_motion_ptr)
+    GuiLabel(Rectangle(screen_width - 250, 440, 220, 20), b"Trajectory Projection: Terrain")
+    GuiLabel(
+        Rectangle(screen_width - 250, 460, 220, 20),
+        b"Terrain Grid: %d x %d" % (
+            motion.terrain_height_grid["num_x"],
+            motion.terrain_height_grid["num_z"],
+        ),
+    )
+    GuiLabel(Rectangle(screen_width - 250, 480, 220, 20), b"Terrain H: %.4f" % frame_state.terrain_height_at_focus)
+    GuiLabel(
+        Rectangle(screen_width - 250, 500, 220, 20),
+        b"Terrain Samples: %d" % len(motion.terrain_provider.sample_positions),
+    )
+    GuiLabel(
+        Rectangle(screen_width - 250, 520, 220, 20),
+        b"Terrain N: [% .2f % .2f % .2f]" % (
+            frame_state.terrain_normal_at_focus[0],
+            frame_state.terrain_normal_at_focus[1],
+            frame_state.terrain_normal_at_focus[2],
+        ),
+    )
+    GuiLabel(
+        Rectangle(screen_width - 250, 540, 220, 20),
+        b"Pen: %d max %.4f" % (
+            frame_state.penetration_count,
+            frame_state.max_penetration_depth,
+        ),
+    )
+    GuiLabel(
+        Rectangle(screen_width - 250, 560, 220, 20),
+        b"%s: mean %.6f max %.6f" % (
+            frame_state.pose_error_label,
+            frame_state.pose_position_error_mean,
+            frame_state.pose_position_error_max,
+        ),
+    )
+
+    debug.playback.draw_ui(screen_width, screen_height)
+
+
+def _unload_app_resources(app):
+    if app is None:
+        return
+
+    UnloadRenderTexture(app.render.lighted)
+    UnloadRenderTexture(app.render.ssao_back)
+    UnloadRenderTexture(app.render.ssao_front)
+    UnloadGBuffer(app.render.gbuffer)
+    UnloadShadowMap(app.render.shadow_map)
+
+    UnloadModel(app.motion.terrain_model)
+    UnloadModel(app.scene.pose_model)
+    UnloadModel(app.scene.geno_model)
+    UnloadModel(app.scene.ground_model)
+
+    UnloadShader(app.shaders.fxaa.program)
+    UnloadShader(app.shaders.blur.program)
+    UnloadShader(app.shaders.ssao.program)
+    UnloadShader(app.shaders.lighting.program)
+    UnloadShader(app.shaders.basic.program)
+    UnloadShader(app.shaders.skinned_basic.program)
+    UnloadShader(app.shaders.skinned_shadow.program)
+    UnloadShader(app.shaders.shadow.program)
+
+
+def main():
+    screen_width = 1280
+    screen_height = 720
+
+    SetConfigFlags(FLAG_VSYNC_HINT)
+    InitWindow(screen_width, screen_height, b"GenoViewPython")
+    SetTargetFPS(60)
+
+    app = None
+    try:
+        app = _create_app_state(screen_width, screen_height)
+        rlSetClipPlanes(0.01, 50.0)
+
+        while not WindowShouldClose():
+            animation_frame = app.debug.playback.update(GetFrameTime())
+            frame_state = _build_frame_state(app, animation_frame)
+            _update_tracking(app, frame_state)
+
+            rlDisableColorBlend()
+            BeginDrawing()
+
+            shadow_pass = _render_shadow_pass(app)
+            camera_pass = _render_gbuffer_pass(app)
+            _render_ssao_and_blur_pass(app, shadow_pass, camera_pass)
+            _render_lighting_and_debug_pass(app, camera_pass, frame_state)
+            _render_final_pass(app)
+
+            rlEnableColorBlend()
+            _draw_ui(app, frame_state)
+            EndDrawing()
+    finally:
+        _unload_app_resources(app)
+        CloseWindow()
+
+
+if __name__ == "__main__":
+    main()

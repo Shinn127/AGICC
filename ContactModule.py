@@ -9,8 +9,20 @@ DEFAULT_CONTACT_CONFIGS = [
 ]
 DEFAULT_BOOTSTRAP_ENVELOPE_WINDOW = 31
 
+__all__ = [
+    "DEFAULT_CONTACT_CONFIGS",
+    "DEFAULT_BOOTSTRAP_ENVELOPE_WINDOW",
+    "BuildContactSource",
+    "BuildContactData",
+    "BuildBootstrapContactData",
+    "BuildTerrainAwareContactData",
+    "GetFrameContacts",
+]
 
-def ResolveContactJointIndices(jointNames, contactConfigs):
+
+# Public contact builders.
+
+def _resolve_contact_joint_indices(jointNames, contactConfigs):
     jointIndices = []
     resolvedConfigs = []
 
@@ -27,7 +39,7 @@ def ResolveContactJointIndices(jointNames, contactConfigs):
 def BuildContactSource(globalPositions, globalVelocities, jointNames, contactConfigs=DEFAULT_CONTACT_CONFIGS):
     globalPositions = np.asarray(globalPositions, dtype=np.float32)
     globalVelocities = np.asarray(globalVelocities, dtype=np.float32)
-    jointIndices, resolvedConfigs = ResolveContactJointIndices(jointNames, contactConfigs)
+    jointIndices, resolvedConfigs = _resolve_contact_joint_indices(jointNames, contactConfigs)
 
     contactPositions = globalPositions[:, jointIndices]
     contactVelocities = globalVelocities[:, jointIndices]
@@ -44,7 +56,7 @@ def BuildContactSource(globalPositions, globalVelocities, jointNames, contactCon
     }
 
 
-def ComputeRawContacts(contactSource):
+def _compute_raw_contacts(contactSource):
     positions = contactSource["positions"]
     speeds = contactSource["speeds"]
     heightThresholds = contactSource["height_thresholds"]
@@ -55,7 +67,7 @@ def ComputeRawContacts(contactSource):
     return (heightCriterion & velocityCriterion).astype(np.uint8)
 
 
-def FilterContacts(contacts, filterSize=6):
+def _filter_contacts(contacts, filterSize=6):
     contacts = np.asarray(contacts, dtype=np.uint8)
     if filterSize <= 1 or len(contacts) == 0:
         return contacts.copy()
@@ -72,7 +84,7 @@ def FilterContacts(contacts, filterSize=6):
     return filteredContacts.astype(np.uint8)
 
 
-def ComputeHeightLowerEnvelope(heights, windowSize=DEFAULT_BOOTSTRAP_ENVELOPE_WINDOW):
+def _compute_height_lower_envelope(heights, windowSize=DEFAULT_BOOTSTRAP_ENVELOPE_WINDOW):
     heights = np.asarray(heights, dtype=np.float32)
     if windowSize <= 1 or len(heights) == 0:
         return heights.copy()
@@ -89,7 +101,7 @@ def ComputeHeightLowerEnvelope(heights, windowSize=DEFAULT_BOOTSTRAP_ENVELOPE_WI
     return lowerEnvelope.astype(np.float32)
 
 
-def ComputeBootstrapContacts(
+def _compute_bootstrap_contacts(
     contactSource,
     envelopeWindow=DEFAULT_BOOTSTRAP_ENVELOPE_WINDOW):
 
@@ -99,7 +111,7 @@ def ComputeBootstrapContacts(
     velocityThresholds = contactSource["velocity_thresholds"]
 
     heights = positions[..., 1].astype(np.float32)
-    lowerEnvelope = ComputeHeightLowerEnvelope(heights, windowSize=envelopeWindow)
+    lowerEnvelope = _compute_height_lower_envelope(heights, windowSize=envelopeWindow)
     relativeHeights = (heights - lowerEnvelope).astype(np.float32)
 
     heightCriterion = relativeHeights < heightThresholds[np.newaxis, :]
@@ -110,6 +122,21 @@ def ComputeBootstrapContacts(
         "contacts_raw": contactsRaw,
         "lower_envelope": lowerEnvelope,
         "relative_heights": relativeHeights,
+    }
+
+
+def _build_contact_data_result(contactSource, contactsRaw, contactsFiltered, **extraFields):
+    return {
+        "joint_indices": contactSource["joint_indices"],
+        "joint_names": contactSource["joint_names"],
+        "positions": contactSource["positions"],
+        "velocities": contactSource["velocities"],
+        "speeds": contactSource["speeds"],
+        "height_thresholds": contactSource["height_thresholds"],
+        "velocity_thresholds": contactSource["velocity_thresholds"],
+        **extraFields,
+        "contacts_raw": contactsRaw,
+        "contacts_filtered": contactsFiltered,
     }
 
 
@@ -152,24 +179,17 @@ def BuildContactData(
         jointNames,
         contactConfigs=contactConfigs,
     )
-    contactsRaw = ComputeRawContacts(contactSource)
+    contactsRaw = _compute_raw_contacts(contactSource)
     contactsFiltered = (
-        FilterContacts(contactsRaw, filterSize=filterSize)
+        _filter_contacts(contactsRaw, filterSize=filterSize)
         if applyTemporalFilter else
         contactsRaw.copy()
     )
 
-    return {
-        "joint_indices": contactSource["joint_indices"],
-        "joint_names": contactSource["joint_names"],
-        "positions": contactSource["positions"],
-        "velocities": contactSource["velocities"],
-        "speeds": contactSource["speeds"],
-        "height_thresholds": contactSource["height_thresholds"],
-        "velocity_thresholds": contactSource["velocity_thresholds"],
-        "contacts_raw": contactsRaw,
-        "contacts_filtered": contactsFiltered,
-    }
+    return _build_contact_data_result(contactSource, contactsRaw, contactsFiltered)
+
+
+# Mode-specific contact adapters.
 
 
 def BuildBootstrapContactData(
@@ -187,33 +207,27 @@ def BuildBootstrapContactData(
         jointNames,
         contactConfigs=contactConfigs,
     )
-    bootstrapResult = ComputeBootstrapContacts(
+    bootstrapResult = _compute_bootstrap_contacts(
         contactSource,
         envelopeWindow=envelopeWindow,
     )
     contactsRaw = bootstrapResult["contacts_raw"]
     contactsFiltered = (
-        FilterContacts(contactsRaw, filterSize=filterSize)
+        _filter_contacts(contactsRaw, filterSize=filterSize)
         if applyTemporalFilter else
         contactsRaw.copy()
     )
 
-    return {
-        "joint_indices": contactSource["joint_indices"],
-        "joint_names": contactSource["joint_names"],
-        "positions": contactSource["positions"],
-        "velocities": contactSource["velocities"],
-        "speeds": contactSource["speeds"],
-        "height_thresholds": contactSource["height_thresholds"],
-        "velocity_thresholds": contactSource["velocity_thresholds"],
-        "height_lower_envelope": bootstrapResult["lower_envelope"],
-        "relative_heights": bootstrapResult["relative_heights"],
-        "contacts_raw": contactsRaw,
-        "contacts_filtered": contactsFiltered,
-    }
+    return _build_contact_data_result(
+        contactSource,
+        contactsRaw,
+        contactsFiltered,
+        height_lower_envelope=bootstrapResult["lower_envelope"],
+        relative_heights=bootstrapResult["relative_heights"],
+    )
 
 
-def ComputeTerrainAwareContacts(contactSource, terrainProvider):
+def _compute_terrain_aware_contacts(contactSource, terrainProvider):
     positions = contactSource["positions"]
     speeds = contactSource["speeds"]
     heightThresholds = contactSource["height_thresholds"]
@@ -248,27 +262,21 @@ def BuildTerrainAwareContactData(
         jointNames,
         contactConfigs=contactConfigs,
     )
-    terrainAwareResult = ComputeTerrainAwareContacts(contactSource, terrainProvider)
+    terrainAwareResult = _compute_terrain_aware_contacts(contactSource, terrainProvider)
     contactsRaw = terrainAwareResult["contacts_raw"]
     contactsFiltered = (
-        FilterContacts(contactsRaw, filterSize=filterSize)
+        _filter_contacts(contactsRaw, filterSize=filterSize)
         if applyTemporalFilter else
         contactsRaw.copy()
     )
 
-    return {
-        "joint_indices": contactSource["joint_indices"],
-        "joint_names": contactSource["joint_names"],
-        "positions": contactSource["positions"],
-        "velocities": contactSource["velocities"],
-        "speeds": contactSource["speeds"],
-        "height_thresholds": contactSource["height_thresholds"],
-        "velocity_thresholds": contactSource["velocity_thresholds"],
-        "terrain_heights": terrainAwareResult["terrain_heights"],
-        "distances_to_ground": terrainAwareResult["distances_to_ground"],
-        "contacts_raw": contactsRaw,
-        "contacts_filtered": contactsFiltered,
-    }
+    return _build_contact_data_result(
+        contactSource,
+        contactsRaw,
+        contactsFiltered,
+        terrain_heights=terrainAwareResult["terrain_heights"],
+        distances_to_ground=terrainAwareResult["distances_to_ground"],
+    )
 
 
 def GetFrameContacts(contactData, frameIndex, filtered=True):
