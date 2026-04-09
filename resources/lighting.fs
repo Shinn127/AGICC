@@ -1,4 +1,4 @@
-#version 300 es
+#version 410
 precision highp float;
 
 in vec2 fragTexCoord;

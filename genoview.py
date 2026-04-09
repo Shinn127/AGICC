@@ -280,8 +280,8 @@ if __name__ == "__main__":
     
     # Init Window
     
-    screenWidth = 1920
-    screenHeight = 1080
+    screenWidth = 1280
+    screenHeight = 720
     
     SetConfigFlags(FLAG_VSYNC_HINT)
     InitWindow(screenWidth, screenHeight, b"GenoViewPython")
