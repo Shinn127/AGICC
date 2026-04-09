@@ -27,8 +27,10 @@ from RootModule import (
     DEFAULT_BVH_FRAME_TIME,
     GetRootTrajectorySampleOffsets,
     BuildRootTrajectorySource,
+    AdaptRootTrajectoryToTerrain,
     BuildRootLocalTrajectory,
     BuildRootTrajectoryDisplay,
+    BuildTerrainAdaptedRootTrajectoryDisplay,
 )
 from TerrainModule import BuildTerrainProviderFromContactData, LoadTerrainModelFromProvider
 from PoseModule import (
@@ -373,7 +375,7 @@ if __name__ == "__main__":
     
     # bvhAnimation = BVHImporter.load(resource_path("ground1_subject1.bvh"), scale=0.01)
     # bvhAnimation = BVHImporter.load(resource_path("Geno_bind.bvh"), scale=0.01)
-    bvhAnimation = BVHImporter.load(resource_path("bvh/lafan1/obstacles6_subject5.bvh"), scale=0.01)
+    bvhAnimation = BVHImporter.load(resource_path("bvh/lafan1/walk1_subject5.bvh"), scale=0.01)
 
     parents = bvhAnimation.parents
     globalRotations = bvhAnimation.global_rotations
@@ -413,19 +415,23 @@ if __name__ == "__main__":
         cellSize=0.1,
         padding=0.5,
     )
-    rootTrajectorySource = BuildRootTrajectorySource(
+    motionRootTrajectory = BuildRootTrajectorySource(
         globalPositions,
         globalRotations,
         bvhFrameTime,
         rootIndex=ROOT_JOINT_INDEX,
-        terrainProvider=terrainProvider,
+        mode="height_3d",
+    )
+    terrainAdaptedRootTrajectory = AdaptRootTrajectoryToTerrain(
+        motionRootTrajectory,
+        terrainProvider,
         alignPositionsToTerrain=False,
     )
     poseSource = BuildPoseSource(
         globalPositions,
         globalRotations,
         bvhFrameTime,
-        rootTrajectorySource=rootTrajectorySource,
+        rootTrajectorySource=motionRootTrajectory,
     )
     terrainSampleNormals = terrainProvider.sample_normals(terrainProvider.sample_positions)
     
@@ -495,7 +501,7 @@ if __name__ == "__main__":
             genoModel, bindPos, bindRot, 
             globalPositions[animationFrame], globalRotations[animationFrame])
         rootTrajectory = BuildRootLocalTrajectory(
-            rootTrajectorySource,
+            motionRootTrajectory,
             animationFrame,
             sampleOffsets=trajectorySampleOffsets,
         )
@@ -507,9 +513,16 @@ if __name__ == "__main__":
             terrainProvider=terrainProvider,
             projectToTerrain=True,
         )
+        terrainRootTrajectoryDisplay = BuildTerrainAdaptedRootTrajectoryDisplay(
+            rootTrajectory,
+            terrainAdaptedRootTrajectory,
+            heightOffset=0.02,
+            alignDirectionsToTerrain=True,
+            alignVelocitiesToTerrain=True,
+        )
         localPose = BuildLocalPose(
             poseSource,
-            rootTrajectorySource,
+            motionRootTrajectory,
             animationFrame,
             dt=bvhFrameTime,
         )
@@ -561,7 +574,7 @@ if __name__ == "__main__":
         )
         terrainQueryPosition = reconstructedPoseWorld["world_positions"][ROOT_JOINT_INDEX]
         terrainHeightAtFocus = terrainProvider.sample_height(terrainQueryPosition)
-        terrainNormalAtFocus = rootTrajectorySource["terrain_normals"][animationFrame]
+        terrainNormalAtFocus = terrainAdaptedRootTrajectory["terrain_normals"][animationFrame]
         bodyProxyFrame = BuildBodyProxyFrame(
             globalPositions[animationFrame],
             bodyProxyLayout,
@@ -825,9 +838,9 @@ if __name__ == "__main__":
 
         if drawRootTrajectoryPtr[0]:
             DrawRootTrajectoryDebug(
-                rootTrajectoryDisplay["world_positions"],
-                rootTrajectoryDisplay["world_directions"],
-                rootTrajectoryDisplay["world_velocities"],
+                terrainRootTrajectoryDisplay["world_positions"],
+                terrainRootTrajectoryDisplay["world_directions"],
+                terrainRootTrajectoryDisplay["world_velocities"],
                 rootTrajectory["sample_offsets"],
                 drawDirection=drawTrajectoryDirectionsPtr[0],
                 drawVelocity=drawTrajectoryVelocityPtr[0],
