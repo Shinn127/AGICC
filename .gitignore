@@ -7,3 +7,4 @@
 *.vscode
 
 ref/
+.DS_Store
