@@ -103,6 +103,7 @@ def build_arg_parser():
     parser.add_argument("--num-experts", type=int, default=8, help="Number of MANN experts.")
     parser.add_argument("--hidden-dim", type=int, default=512, help="Hidden dimension of the expert MLP.")
     parser.add_argument("--gating-hidden-dim", type=int, default=32, help="Hidden dimension of the gating network.")
+    parser.add_argument("--dropout", type=float, default=0.3, help="Dropout probability used in gating and expert MLP layers.")
     parser.add_argument("--loader-workers", type=int, default=0, help="PyTorch DataLoader worker count.")
     parser.add_argument("--train-ratio", type=float, default=0.8, help="Train split ratio when split file is not provided.")
     parser.add_argument("--val-ratio", type=float, default=0.1, help="Validation split ratio when split file is not provided.")
@@ -150,6 +151,7 @@ def main():
         hidden_dim=args.hidden_dim,
         gating_hidden_dim=args.gating_hidden_dim,
         num_experts=args.num_experts,
+        dropout=args.dropout,
     ).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),

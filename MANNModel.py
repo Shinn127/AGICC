@@ -9,6 +9,7 @@ import torch.nn.functional as F
 DEFAULT_MANN_HIDDEN_DIM = 512
 DEFAULT_GATING_HIDDEN_DIM = 32
 DEFAULT_NUM_EXPERTS = 8
+DEFAULT_MANN_DROPOUT = 0.3
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class MANNModelConfig:
     hidden_dim: int = DEFAULT_MANN_HIDDEN_DIM
     gating_hidden_dim: int = DEFAULT_GATING_HIDDEN_DIM
     num_experts: int = DEFAULT_NUM_EXPERTS
+    dropout: float = DEFAULT_MANN_DROPOUT
 
     @classmethod
     def from_data_spec(
@@ -30,6 +32,7 @@ class MANNModelConfig:
         hidden_dim=DEFAULT_MANN_HIDDEN_DIM,
         gating_hidden_dim=DEFAULT_GATING_HIDDEN_DIM,
         num_experts=DEFAULT_NUM_EXPERTS,
+        dropout=DEFAULT_MANN_DROPOUT,
     ):
         y_pose_dim = spec.y_pose_slice.stop - spec.y_pose_slice.start
         y_root_dim = spec.y_root_slice.stop - spec.y_root_slice.start
@@ -44,19 +47,24 @@ class MANNModelConfig:
             hidden_dim=hidden_dim,
             gating_hidden_dim=gating_hidden_dim,
             num_experts=num_experts,
+            dropout=dropout,
         )
 
 
 class GatingNetwork(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_experts):
+    def __init__(self, input_dim, hidden_dim, num_experts, dropout=DEFAULT_MANN_DROPOUT):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fc3 = nn.Linear(hidden_dim, num_experts)
+        self.dropout = float(dropout)
 
     def forward(self, x_gate):
-        x = F.elu(self.fc1(x_gate))
+        x = F.dropout(x_gate, p=self.dropout, training=self.training)
+        x = F.elu(self.fc1(x))
+        x = F.dropout(x, p=self.dropout, training=self.training)
         x = F.elu(self.fc2(x))
+        x = F.dropout(x, p=self.dropout, training=self.training)
         return F.softmax(self.fc3(x), dim=-1)
 
 
@@ -93,6 +101,7 @@ class MANN(nn.Module):
             input_dim=config.x_gate_dim,
             hidden_dim=config.gating_hidden_dim,
             num_experts=config.num_experts,
+            dropout=config.dropout,
         )
         self.expert_fc1 = ExpertLinear(
             in_features=config.x_main_dim,
@@ -117,19 +126,24 @@ class MANN(nn.Module):
         hidden_dim=DEFAULT_MANN_HIDDEN_DIM,
         gating_hidden_dim=DEFAULT_GATING_HIDDEN_DIM,
         num_experts=DEFAULT_NUM_EXPERTS,
+        dropout=DEFAULT_MANN_DROPOUT,
     ):
         config = MANNModelConfig.from_data_spec(
             spec,
             hidden_dim=hidden_dim,
             gating_hidden_dim=gating_hidden_dim,
             num_experts=num_experts,
+            dropout=dropout,
         )
         return cls(config)
 
     def forward(self, x_main, x_gate, return_aux=False):
         expert_weights = self.gating_network(x_gate)
-        hidden = F.elu(self.expert_fc1(x_main, expert_weights))
+        hidden = F.dropout(x_main, p=self.config.dropout, training=self.training)
+        hidden = F.elu(self.expert_fc1(hidden, expert_weights))
+        hidden = F.dropout(hidden, p=self.config.dropout, training=self.training)
         hidden = F.elu(self.expert_fc2(hidden, expert_weights))
+        hidden = F.dropout(hidden, p=self.config.dropout, training=self.training)
         y_pred = self.expert_fc3(hidden, expert_weights)
 
         if return_aux:
