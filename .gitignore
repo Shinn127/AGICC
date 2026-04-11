@@ -8,3 +8,6 @@
 
 ref/
 .DS_Store
+
+resources/annotations
+resources/exports
