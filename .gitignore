@@ -9,3 +9,6 @@
 ref/
 .DS_Store
 output/
+
+resources/annotations
+resources/exports

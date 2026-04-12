@@ -1,12 +1,7 @@
 import numpy as np
+from scipy import signal as scipy_signal
 
-import quat
-from Utils import ClampFrameIndex, ComputeFiniteDifferenceVelocities
-
-try:
-    from scipy import signal as scipy_signal
-except ImportError:
-    scipy_signal = None
+from genoview.utils import quat
 
 
 ROOT_JOINT_INDEX = 0
@@ -24,22 +19,22 @@ MIN_TERRAIN_UP_CONTINUITY_DOT = 0.3
 TERRAIN_UP_SMOOTH_ALPHA = 0.15
 TERRAIN_FORWARD_SMOOTH_ALPHA = 0.3
 
-__all__ = [
-    "ROOT_JOINT_INDEX",
-    "ROOT_TRAJECTORY_MODE_FLAT",
-    "ROOT_TRAJECTORY_MODE_HEIGHT_3D",
-    "DEFAULT_BVH_FRAME_TIME",
-    "GetRootTrajectorySampleOffsets",
-    "BuildRootTrajectorySource",
-    "AdaptRootTrajectoryToTerrain",
-    "BuildRootLocalTrajectory",
-    "ReconstructRootTrajectoryWorldSpace",
-    "BuildRootTrajectoryDisplay",
-    "BuildTerrainAdaptedRootTrajectoryDisplay",
-]
+def ClampFrameIndex(frameIndex, frameCount):
+    if frameCount <= 0:
+        return 0
+    return int(max(0, min(int(frameIndex), int(frameCount) - 1)))
 
 
-# Public API: sampling and trajectory builders
+def ComputeFiniteDifferenceVelocities(samples, dt):
+    samples = np.asarray(samples, dtype=np.float32)
+    velocities = np.zeros_like(samples, dtype=np.float32)
+    if len(samples) <= 1:
+        return velocities
+    velocities[1:-1] = (samples[2:] - samples[:-2]) / (2.0 * dt)
+    velocities[0] = (samples[1] - samples[0]) / dt
+    velocities[-1] = (samples[-1] - samples[-2]) / dt
+    return velocities.astype(np.float32)
+
 
 def GetRootTrajectorySampleOffsets(step=10, radius=60):
     return np.arange(-radius, radius + 1, step, dtype=np.int32)
@@ -74,54 +69,18 @@ def _get_savgol_window_length(sampleCount, preferredWindow, polyorder):
     return int(windowLength)
 
 
-def _apply_savgol_filter_fallback(data, windowLength, polyorder):
-    sampleCount = len(data)
-    halfWindow = windowLength // 2
-    output = np.empty_like(data, dtype=np.float32)
-
-    centerX = np.arange(-halfWindow, halfWindow + 1, dtype=np.float32)
-    centerDesign = np.vander(centerX, polyorder + 1, increasing=True)
-    centerWeights = np.linalg.pinv(centerDesign)[0].astype(np.float32)
-    leftX = np.arange(windowLength, dtype=np.float32)
-    leftDesign = np.vander(leftX, polyorder + 1, increasing=True)
-    leftPseudoInverse = np.linalg.pinv(leftDesign).astype(np.float32)
-
-    for i in range(halfWindow, sampleCount - halfWindow):
-        output[i] = centerWeights @ data[i - halfWindow:i + halfWindow + 1]
-
-    leftWindow = data[:windowLength]
-    leftCoefficients = leftPseudoInverse @ leftWindow
-    for i in range(halfWindow):
-        output[i] = (
-            np.vander(np.asarray([i], dtype=np.float32), polyorder + 1, increasing=True) @ leftCoefficients
-        )[0]
-
-    rightWindow = data[-windowLength:]
-    rightCoefficients = leftPseudoInverse @ rightWindow
-    rightStart = sampleCount - windowLength
-    for i in range(sampleCount - halfWindow, sampleCount):
-        localIndex = i - rightStart
-        output[i] = (
-            np.vander(np.asarray([localIndex], dtype=np.float32), polyorder + 1, increasing=True) @ rightCoefficients
-        )[0]
-
-    return output.astype(np.float32)
-
-
 def _apply_savgol_filter(data, preferredWindow, polyorder):
     data = np.asarray(data, dtype=np.float32)
     windowLength = _get_savgol_window_length(len(data), preferredWindow, polyorder)
     if windowLength is None:
         return data.copy()
-    if scipy_signal is not None:
-        return scipy_signal.savgol_filter(
-            data,
-            windowLength,
-            polyorder,
-            axis=0,
-            mode="interp",
-        ).astype(np.float32)
-    return _apply_savgol_filter_fallback(data, windowLength, polyorder)
+    return scipy_signal.savgol_filter(
+        data,
+        windowLength,
+        polyorder,
+        axis=0,
+        mode="interp",
+    ).astype(np.float32)
 
 
 def _project_trajectory_to_ground(vectors, groundHeight=0.0):
@@ -436,118 +395,6 @@ def BuildRootLocalTrajectory(
         "local_directions": localDirections,
         "local_velocities": localVelocities,
     }
-
-
-def ReconstructRootTrajectoryWorldSpace(
-    localPositions,
-    localDirections,
-    localVelocities,
-    currentRootPosition,
-    currentRootRotation):
-
-    trajectoryCount = len(localPositions)
-    repeatedRotation = np.repeat(currentRootRotation[np.newaxis, :], trajectoryCount, axis=0)
-    worldPositions = quat.mul_vec(repeatedRotation, localPositions) + currentRootPosition[np.newaxis, :]
-    worldDirections = np.asarray(
-        [_normalize_direction(direction) for direction in quat.mul_vec(repeatedRotation, localDirections)],
-        dtype=np.float32,
-    )
-    worldVelocities = quat.mul_vec(repeatedRotation, localVelocities).astype(np.float32)
-
-    return {
-        "world_positions": worldPositions.astype(np.float32),
-        "world_directions": worldDirections,
-        "world_velocities": worldVelocities,
-    }
-
-
-# Debug/display adapters built on top of the core trajectory data.
-
-
-def _apply_trajectory_ground_projection(
-    worldPositions,
-    worldDirections,
-    worldVelocities,
-    groundHeight=0.0,
-    projectToGround=True,
-    heightOffset=0.01):
-
-    projectedPositions = worldPositions.copy()
-    projectedDirections = worldDirections.copy()
-    projectedVelocities = worldVelocities.copy()
-
-    if projectToGround:
-        projectedPositions[:, 1] = groundHeight + heightOffset
-        projectedDirections[:, 1] = 0.0
-        projectedVelocities[:, 1] = 0.0
-        projectedDirections = np.asarray(
-            [_normalize_direction(direction) for direction in projectedDirections],
-            dtype=np.float32,
-        )
-
-    return {
-        "world_positions": projectedPositions.astype(np.float32),
-        "world_directions": projectedDirections.astype(np.float32),
-        "world_velocities": projectedVelocities.astype(np.float32),
-    }
-
-
-def _apply_trajectory_terrain_projection(
-    worldPositions,
-    worldDirections,
-    worldVelocities,
-    terrainProvider,
-    projectToTerrain=True,
-    heightOffset=0.01):
-
-    projectedPositions = np.asarray(worldPositions, dtype=np.float32).copy()
-    projectedDirections = np.asarray(worldDirections, dtype=np.float32).copy()
-    projectedVelocities = np.asarray(worldVelocities, dtype=np.float32).copy()
-
-    if projectToTerrain and terrainProvider is not None and len(projectedPositions) > 0:
-        projectedPositions[:, 1] = terrainProvider.sample_heights(projectedPositions) + heightOffset
-
-    return {
-        "world_positions": projectedPositions.astype(np.float32),
-        "world_directions": projectedDirections.astype(np.float32),
-        "world_velocities": projectedVelocities.astype(np.float32),
-    }
-
-
-def BuildRootTrajectoryDisplay(
-    rootTrajectory,
-    groundHeight=0.0,
-    projectToGround=True,
-    heightOffset=0.01,
-    terrainProvider=None,
-    projectToTerrain=False):
-
-    rootTrajectoryWorld = ReconstructRootTrajectoryWorldSpace(
-        rootTrajectory["local_positions"],
-        rootTrajectory["local_directions"],
-        rootTrajectory["local_velocities"],
-        rootTrajectory["current_root_position"],
-        rootTrajectory["current_root_rotation"],
-    )
-
-    if terrainProvider is not None and projectToTerrain:
-        return _apply_trajectory_terrain_projection(
-            rootTrajectoryWorld["world_positions"],
-            rootTrajectoryWorld["world_directions"],
-            rootTrajectoryWorld["world_velocities"],
-            terrainProvider,
-            projectToTerrain=projectToTerrain,
-            heightOffset=heightOffset,
-        )
-
-    return _apply_trajectory_ground_projection(
-        rootTrajectoryWorld["world_positions"],
-        rootTrajectoryWorld["world_directions"],
-        rootTrajectoryWorld["world_velocities"],
-        groundHeight=groundHeight,
-        projectToGround=projectToGround,
-        heightOffset=heightOffset,
-    )
 
 
 def BuildTerrainAdaptedRootTrajectoryDisplay(

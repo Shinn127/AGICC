@@ -3,20 +3,6 @@ import numpy as np
 from pyray import Color, Vector3, Vector4
 from raylib import *
 
-__all__ = [
-    "DrawSkeleton",
-    "OffsetPositions",
-    "DrawPoseReconstructionError",
-    "DrawContactStates",
-    "DrawContactDataFrame",
-    "DrawTerrainSamples",
-    "DrawTerrainNormals",
-    "DrawBodyProxyFrame",
-    "DrawTerrainPenetrationFrame",
-    "DrawRootTrajectoryDebug",
-]
-
-
 # Internal drawing helpers.
 
 def _draw_transform(position, rotation, scale):
@@ -90,30 +76,6 @@ def DrawContactStates(
                 4,
                 10,
                 activeColor if isActive else inactiveColor)
-
-
-def DrawContactDataFrame(
-    contactData,
-    frameIndex,
-    filtered=True,
-    activeColor=Color(90, 90, 90, 255),
-    inactiveColor=Color(190, 190, 190, 255),
-    activeSize=0.05,
-    inactiveSize=0.05,
-    drawInactive=True):
-
-    contactPositions = contactData["positions"][frameIndex]
-    contacts = contactData["contacts_filtered" if filtered else "contacts_raw"][frameIndex]
-
-    DrawContactStates(
-        contactPositions,
-        contacts,
-        activeColor=activeColor,
-        inactiveColor=inactiveColor,
-        activeSize=activeSize,
-        inactiveSize=inactiveSize,
-        drawInactive=drawInactive,
-    )
 
 
 def DrawTerrainSamples(

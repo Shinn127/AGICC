@@ -11,10 +11,14 @@ from raylib import *
 from raylib.defines import *
 from pyray import Vector2, Vector3, Color, Rectangle
 
-from BVHImporter import BVHImporter
-from CameraController import Camera
-from CharacterModel import UpdateModelPoseFromNumpyArrays
-from DebugDraw import DrawRootTrajectoryDebug
+from genoview.modules.BVHImporter import BVHImporter
+from genoview.modules.CameraController import Camera
+from genoview.modules.CharacterModel import (
+    LoadCharacterModel,
+    LoadSceneResources,
+    UpdateModelPoseFromNumpyArrays,
+)
+from genoview.utils.DebugDraw import DrawRootTrajectoryDebug
 from HumanoidLocomotionConfig import (
     HUMANOID_LOCOMOTION_ACTION_LABELS,
     HUMANOID_LOCOMOTION_GATING_JOINTS,
@@ -25,31 +29,29 @@ from HumanoidLocomotionConfig import (
 )
 from MANNDataset import MANNDataSpec, MANNFeatureStats
 from MANNModel import MANN, MANNModelConfig
-from PoseModule import BuildLocalPose, BuildPoseSource, ReconstructPoseWorldSpace
-from RootModule import (
+from genoview.modules.PoseModule import BuildLocalPose, BuildPoseSource, ReconstructPoseWorldSpace
+from genoview.modules.RootModule import (
     ROOT_JOINT_INDEX,
     ROOT_TRAJECTORY_MODE_FLAT,
     DEFAULT_BVH_FRAME_TIME,
     BuildRootTrajectorySource,
 )
-import quat
-from genoview import (
+from genoview.utils import quat
+from genoview.modules.RenderModule import (
     BeginGBuffer,
     BeginShadowMap,
+    CreateRenderResources,
     EndGBuffer,
     EndShadowMap,
+    LoadShaderResources,
     SetShaderValueShadowMap,
     UnloadGBuffer,
     UnloadShadowMap,
-    _create_render_resources,
     _draw_model_with_shader,
-    _load_scene_resources,
-    _load_shader_resources,
     _make_float_ptr,
     _render_final_pass,
     _render_ssao_and_blur_pass,
     ffi,
-    resource_path,
 )
 
 
@@ -67,6 +69,13 @@ DEFAULT_ROTATION_HALFLIFE = 0.15
 DEFAULT_GAMEPAD_DEADZONE = 0.2
 DEFAULT_TRAJECTORY_BUFFER_BLEND = 0.35
 DEFAULT_Y_FUTURE_BLEND = 0.5
+PROJECT_ROOT = Path(__file__).resolve().parent
+RESOURCES_DIR = PROJECT_ROOT / "resources"
+
+
+def resource_path(*parts, as_bytes=False):
+    path = RESOURCES_DIR.joinpath(*parts)
+    return str(path).encode("utf-8") if as_bytes else str(path)
 
 
 @dataclass(frozen=True)
@@ -1141,8 +1150,14 @@ def _load_static_motion_resources(scene, clip_path: Path, initial_frame: int):
     )
 
 
+def _load_mann_scene_resources():
+    scene = LoadSceneResources(resource_path)
+    scene.pose_model = LoadCharacterModel(resource_path("Geno.bin", as_bytes=True))
+    return scene
+
+
 def _create_viewer_state(config: ViewerConfig):
-    scene = _load_scene_resources()
+    scene = _load_mann_scene_resources()
     motion = _load_static_motion_resources(scene, config.clip_path, config.initial_frame)
     feature_builder = FeatureBuilder(motion.joint_names, motion.bvh_animation.parents)
     runtime = MANNRuntime()
@@ -1173,8 +1188,8 @@ def _create_viewer_state(config: ViewerConfig):
         motion=motion,
         feature_builder=feature_builder,
         runtime=runtime,
-        shaders=_load_shader_resources(),
-        render=_create_render_resources(config.screen_width, config.screen_height),
+        shaders=LoadShaderResources(resource_path),
+        render=CreateRenderResources(config.screen_width, config.screen_height),
         camera=camera,
         show_flat_ground=True,
         show_pose_model=True,

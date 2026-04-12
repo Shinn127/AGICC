@@ -12,7 +12,7 @@ except ImportError:
     def tqdm(iterable=None, *args, **kwargs):
         return iterable
 
-from BVHImporter import BVHImporter
+from genoview.modules.BVHImporter import BVHImporter
 from HumanoidLocomotionConfig import (
     HUMANOID_LOCOMOTION_ACTION_LABELS,
     HUMANOID_LOCOMOTION_ACTION_PREFIX_TO_LABEL,
@@ -22,8 +22,8 @@ from HumanoidLocomotionConfig import (
     HUMANOID_LOCOMOTION_TRAJECTORY_FUTURE_SAMPLE_INDICES,
     HUMANOID_LOCOMOTION_TRAJECTORY_SAMPLE_OFFSETS,
 )
-from PoseModule import BuildLocalPose, BuildPoseSource
-from RootModule import (
+from genoview.modules.PoseModule import BuildLocalPose, BuildPoseSource
+from genoview.modules.RootModule import (
     DEFAULT_BVH_FRAME_TIME,
     ROOT_TRAJECTORY_MODE_FLAT,
     BuildRootLocalTrajectory,

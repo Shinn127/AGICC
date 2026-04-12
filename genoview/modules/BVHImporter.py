@@ -3,8 +3,13 @@ from pathlib import Path
 
 import numpy as np
 
-import bvh
-import quat
+from genoview.State import MotionResources
+from genoview.modules.RootModule import DEFAULT_BVH_FRAME_TIME, GetRootTrajectorySampleOffsets
+from genoview.utils import bvh, quat
+
+
+DEFAULT_BVH_CLIP = "bvh/lafan1/jumps1_subject1.bvh"
+DEFAULT_BVH_DIR = "bvh/lafan1"
 
 
 @dataclass(frozen=True)
@@ -63,3 +68,33 @@ class BVHImporter:
                 order=order,
             )
         )
+
+
+def DiscoverBVHClips(resources_dir, default_bvh_dir=DEFAULT_BVH_DIR, default_bvh_clip=DEFAULT_BVH_CLIP):
+    bvh_dir = resources_dir / default_bvh_dir
+    clips = [
+        str(path.relative_to(resources_dir))
+        for path in sorted(bvh_dir.glob("*.bvh"))
+    ]
+    return clips if clips else [default_bvh_clip]
+
+
+def GetClipIndex(clip_resources, clip_resource):
+    try:
+        return clip_resources.index(clip_resource)
+    except ValueError:
+        return 0
+
+
+def LoadMotionResources(resource_path, clip_resource=DEFAULT_BVH_CLIP):
+    bvh_animation = BVHImporter.load(resource_path(clip_resource), scale=0.01)
+    return MotionResources(
+        clip_resource=clip_resource,
+        clip_name=Path(clip_resource).stem,
+        bvh_animation=bvh_animation,
+        parents=bvh_animation.parents,
+        global_positions=bvh_animation.global_positions,
+        global_rotations=bvh_animation.global_rotations,
+        trajectory_sample_offsets=GetRootTrajectorySampleOffsets(),
+        bvh_frame_time=DEFAULT_BVH_FRAME_TIME,
+    )
