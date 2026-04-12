@@ -575,42 +575,22 @@ def _labels_to_segments(labels, source):
         return []
 
     segments = []
-    startFrame = 0
-    currentLabel = str(labels[0])
+    currentLabel = None if labels[0] is None else str(labels[0])
+    startFrame = 0 if currentLabel is not None else None
 
-    for frameIndex in range(1, len(labels)):
-        if labels[frameIndex] == currentLabel:
-            continue
-        segments.append(LabelSegment(startFrame, frameIndex - 1, currentLabel, source=source))
-        startFrame = frameIndex
-        currentLabel = str(labels[frameIndex])
-
-    segments.append(LabelSegment(startFrame, len(labels) - 1, currentLabel, source=source))
-    return segments
-
-
-def _manual_labels_to_segments(manualLabels):
-    manualLabels = np.asarray(manualLabels, dtype=object)
-    if len(manualLabels) == 0:
-        return []
-
-    segments = []
-    currentLabel = None
-    startFrame = None
-
-    for frameIndex, label in enumerate(manualLabels):
+    for frameIndex, label in enumerate(labels[1:], start=1):
         label = None if label is None else str(label)
         if label == currentLabel:
             continue
 
         if currentLabel is not None and startFrame is not None:
-            segments.append(LabelSegment(startFrame, frameIndex - 1, currentLabel, source="manual"))
+            segments.append(LabelSegment(startFrame, frameIndex - 1, currentLabel, source=source))
 
         currentLabel = label
         startFrame = frameIndex if label is not None else None
 
     if currentLabel is not None and startFrame is not None:
-        segments.append(LabelSegment(startFrame, len(manualLabels) - 1, currentLabel, source="manual"))
+        segments.append(LabelSegment(startFrame, len(labels) - 1, currentLabel, source=source))
 
     return segments
 
@@ -733,113 +713,6 @@ def _find_neighbor_segment(segments, startIndex, step):
             return segments[index]
         index += step
     return None
-
-
-def _build_soft_weights_from_labels(labels, transitionFrames=DEFAULT_TRANSITION_FRAMES):
-    labels = np.asarray(labels, dtype=object)
-    frameCount = len(labels)
-    weights = CreateEmptySoftWeights(frameCount, fillLabel=LABEL_OTHER)
-    if frameCount == 0:
-        return weights
-
-    weights[:] = 0.0
-    hardLabelIndices = np.asarray([LABEL_TO_INDEX[str(label)] for label in labels], dtype=np.int32)
-    weights[np.arange(frameCount), hardLabelIndices] = 1.0
-
-    segments = _labels_to_segments(labels, source="compiled")
-
-    for segmentIndex, segment in enumerate(segments):
-        if segment.label != LABEL_TRANSITION:
-            continue
-
-        previousSegment = _find_neighbor_segment(segments, segmentIndex, -1)
-        nextSegment = _find_neighbor_segment(segments, segmentIndex, 1)
-        segmentLength = segment.end_frame - segment.start_frame + 1
-
-        for localIndex, frameIndex in enumerate(range(segment.start_frame, segment.end_frame + 1)):
-            alpha = 0.5 if segmentLength <= 1 else localIndex / max(segmentLength - 1, 1)
-            eased = _ease_cosine(alpha)
-            transitionStrength = 0.45 + 0.55 * np.sin(np.pi * alpha)
-
-            if previousSegment is not None and nextSegment is not None:
-                if previousSegment.label == nextSegment.label:
-                    sharedStrength = max(0.0, 1.0 - transitionStrength)
-                    _assign_soft_weight_row(
-                        weights,
-                        frameIndex,
-                        {
-                            previousSegment.label: sharedStrength,
-                            LABEL_TRANSITION: transitionStrength,
-                        },
-                    )
-                else:
-                    sideStrength = max(0.0, 1.0 - transitionStrength)
-                    _assign_soft_weight_row(
-                        weights,
-                        frameIndex,
-                        {
-                            previousSegment.label: (1.0 - eased) * sideStrength,
-                            nextSegment.label: eased * sideStrength,
-                            LABEL_TRANSITION: transitionStrength,
-                        },
-                    )
-            elif previousSegment is not None:
-                _assign_soft_weight_row(
-                    weights,
-                    frameIndex,
-                    {
-                        previousSegment.label: max(0.0, 1.0 - eased),
-                        LABEL_TRANSITION: max(0.0, eased),
-                    },
-                )
-            elif nextSegment is not None:
-                _assign_soft_weight_row(
-                    weights,
-                    frameIndex,
-                    {
-                        LABEL_TRANSITION: max(0.0, 1.0 - eased),
-                        nextSegment.label: max(0.0, eased),
-                    },
-                )
-
-    implicitBlendFrames = max(1, int(transitionFrames) // 3)
-    for segmentIndex in range(len(segments) - 1):
-        leftSegment = segments[segmentIndex]
-        rightSegment = segments[segmentIndex + 1]
-        if LABEL_TRANSITION in (leftSegment.label, rightSegment.label):
-            continue
-        if leftSegment.label == rightSegment.label:
-            continue
-
-        leftLength = leftSegment.end_frame - leftSegment.start_frame + 1
-        rightLength = rightSegment.end_frame - rightSegment.start_frame + 1
-        blendFrames = min(implicitBlendFrames, leftLength, rightLength)
-        if blendFrames <= 0:
-            continue
-
-        for offset in range(blendFrames):
-            alpha = _ease_cosine((offset + 1) / (blendFrames + 1))
-            leftFrame = leftSegment.end_frame - blendFrames + 1 + offset
-            rightFrame = rightSegment.start_frame + offset
-
-            _assign_soft_weight_row(
-                weights,
-                leftFrame,
-                {
-                    leftSegment.label: 1.0 - 0.5 * alpha,
-                    rightSegment.label: 0.5 * alpha,
-                },
-            )
-            _assign_soft_weight_row(
-                weights,
-                rightFrame,
-                {
-                    leftSegment.label: 0.5 * (1.0 - alpha),
-                    rightSegment.label: 0.5 + 0.5 * alpha,
-                },
-            )
-
-    return weights.astype(np.float32)
 
 
 def _normalize_transition_override(startFrame, endFrame, width):
@@ -1030,7 +903,7 @@ def SaveLabelAnnotations(labelResult: LabelModuleResult, clipNameOrPath: str, an
     annotationFile = Path(annotationPath) if annotationPath is not None else GetDefaultAnnotationPath(clipNameOrPath)
     annotationFile.parent.mkdir(parents=True, exist_ok=True)
 
-    manualSegments = _manual_labels_to_segments(manualLabels)
+    manualSegments = _labels_to_segments(manualLabels, source="manual")
     payload = {
         "version": 1,
         "clip_name": NormalizeClipName(clipNameOrPath),
@@ -1163,63 +1036,12 @@ def BuildAutoFrameLabels(
     labels = _merge_short_segments(labels, minSegmentLength=max(2, minSegmentLength // 2))
 
     autoSegments = _labels_to_segments(labels, source="auto")
-    softWeights = CreateEmptySoftWeights(len(labels), fillLabel=LABEL_OTHER)
-    if len(labels) > 0:
-        softWeights[:] = 0.0
-        labelIndices = np.asarray([LABEL_TO_INDEX[str(label)] for label in labels], dtype=np.int32)
-        softWeights[np.arange(len(labels)), labelIndices] = 1.0
-
     result = BuildLabelModuleResult(
         clipNameOrPath,
         featureSource=featureSource,
         autoScores=scores,
         autoLabels=np.asarray(labels, dtype=object),
         autoSegments=autoSegments,
-        softWeights=softWeights,
         annotationPath=str(GetDefaultAnnotationPath(clipNameOrPath)),
     )
     return _rebuild_final_labels(result)
-
-
-__all__ = [
-    "LABEL_IDLE",
-    "LABEL_WALK",
-    "LABEL_RUN",
-    "LABEL_JUMP",
-    "LABEL_FALL",
-    "LABEL_GROUND",
-    "LABEL_GET_UP",
-    "LABEL_TRANSITION",
-    "LABEL_OTHER",
-    "ACTION_LABELS",
-    "LABEL_TO_INDEX",
-    "CLIP_PRIOR_WALK",
-    "CLIP_PRIOR_RUN",
-    "CLIP_PRIOR_JUMP",
-    "CLIP_PRIOR_FALL_RECOVERY",
-    "CLIP_PRIOR_GROUND",
-    "CLIP_PRIOR_MIXED",
-    "CLIP_PRIOR_OTHER",
-    "CLIP_PRIORS",
-    "DEFAULT_TRANSITION_FRAMES",
-    "LabelSegment",
-    "LabelModuleResult",
-    "NormalizeClipName",
-    "GetClipPriorFromName",
-    "GetCandidateLabelsFromPrior",
-    "BuildLabelFeatureSource",
-    "BuildAutoLabelScores",
-    "BuildAutoFrameLabels",
-    "ApplyManualLabelRange",
-    "ClearManualLabelRange",
-    "ResetManualLabels",
-    "ApplyTransitionWidthRange",
-    "ClearTransitionWidthRange",
-    "GetDefaultAnnotationPath",
-    "SaveLabelAnnotations",
-    "LoadLabelAnnotations",
-    "GetDefaultExportPath",
-    "ExportCompiledLabels",
-    "BuildLabelModuleResult",
-    "CreateEmptySoftWeights",
-]

@@ -1,25 +1,16 @@
 import cffi
 import numpy as np
 
-from pyray import Matrix, Mesh
+from pyray import Color, Mesh, Rectangle
 from raylib import *
 
+from genoview.utils.DebugDraw import DrawTerrainNormals, DrawTerrainSamples
 
-ffi = cffi.FFI()
 
 DEFAULT_TERRAIN_CELL_SIZE = 0.1
 DEFAULT_TERRAIN_PADDING = 0.5
 MAX_TERRAIN_VERTEX_COUNT = 60000
-
-__all__ = [
-    "TerrainProvider",
-    "BuildTerrainProvider",
-    "BuildTerrainSamplesFromContactData",
-    "BuildTerrainProviderFromContactData",
-    "BuildTerrainHeightGrid",
-    "LoadTerrainModelFromProvider",
-]
-
+ffi = cffi.FFI()
 
 # Core terrain query object.
 
@@ -282,7 +273,6 @@ def _build_terrain_mesh_arrays(heightGrid):
         texcoords[:, :, 0] = np.linspace(0.0, 1.0, numX, dtype=np.float32)[np.newaxis, :]
     if numZ > 1:
         texcoords[:, :, 1] = np.linspace(0.0, 1.0, numZ, dtype=np.float32)[:, np.newaxis]
-    texcoords = texcoords.reshape((-1, 2)).astype(np.float32)
 
     triangleCount = (numX - 1) * (numZ - 1) * 2
     indices = np.zeros((triangleCount, 3), dtype=np.uint16)
@@ -302,27 +292,12 @@ def _build_terrain_mesh_arrays(heightGrid):
     return {
         "vertices": vertices,
         "normals": normals,
-        "texcoords": texcoords,
+        "texcoords": texcoords.reshape((-1, 2)).astype(np.float32),
         "indices": indices.reshape(-1),
     }
 
 
-# Render adapter: converts the terrain height field into a raylib model.
-
-def LoadTerrainModelFromProvider(
-    terrainProvider,
-    samplePositions,
-    cellSize=DEFAULT_TERRAIN_CELL_SIZE,
-    padding=DEFAULT_TERRAIN_PADDING,
-    maxVertexCount=MAX_TERRAIN_VERTEX_COUNT):
-
-    heightGrid = BuildTerrainHeightGrid(
-        terrainProvider,
-        samplePositions,
-        cellSize=cellSize,
-        padding=padding,
-        maxVertexCount=maxVertexCount,
-    )
+def LoadTerrainModelFromHeightGrid(heightGrid):
     meshArrays = _build_terrain_mesh_arrays(heightGrid)
 
     mesh = Mesh()
@@ -343,3 +318,83 @@ def LoadTerrainModelFromProvider(
     model.transform = MatrixIdentity()
 
     return model, heightGrid
+
+
+def _draw_model_with_shader(model, shader, position, color):
+    model.materials[0].shader = shader
+    DrawModel(model, position, 1.0, color)
+
+
+def DrawTerrainShadow(app, shader):
+    if not app.features.is_clip_ready(app, "terrain_height_grid"):
+        return
+    terrain_model = app.features.mount_clip(app, "terrain_model")
+    _draw_model_with_shader(terrain_model[0], shader, Vector3Zero(), WHITE)
+
+
+def DrawTerrainGBuffer(app, shader):
+    if not app.features.is_clip_ready(app, "terrain_height_grid"):
+        return
+    terrain_model = app.features.mount_clip(app, "terrain_model")
+    _draw_model_with_shader(terrain_model[0], shader, Vector3Zero(), Color(190, 190, 190, 255))
+
+
+def DrawTerrainDebugOverlay(app):
+    debug = app.debug
+    if debug.draw_terrain_samples_ptr[0]:
+        if not app.features.is_clip_ready(app, "terrain_provider"):
+            return
+        terrain_provider = app.features.mount_clip(app, "terrain_provider")
+        DrawTerrainSamples(terrain_provider.sample_positions)
+
+    if debug.draw_terrain_normals_ptr[0]:
+        if not app.features.is_clip_ready(app, "terrain_provider") or not app.features.is_clip_ready(app, "terrain_sample_normals"):
+            return
+        terrain_provider = app.features.mount_clip(app, "terrain_provider")
+        DrawTerrainNormals(
+            terrain_provider.sample_positions,
+            app.features.mount_clip(app, "terrain_sample_normals"),
+        )
+
+
+def DrawTerrainRenderPanelMetrics(app, frame_state, ensure_terrain_focus, start_y):
+    motion = app.motion
+    ensure_terrain_focus(app, frame_state)
+    if (
+        frame_state.terrain_height_at_focus is None or
+        not app.features.is_clip_ready(app, "terrain_height_grid") or
+        not app.features.is_clip_ready(app, "terrain_provider")
+    ):
+        return start_y
+    app.features.mount_clip(app, "terrain_height_grid")
+    terrain_provider = app.features.mount_clip(app, "terrain_provider")
+    x = app.screen_width - 250
+    y = int(start_y)
+    row_height = 20
+
+    GuiLabel(Rectangle(x, y, 220, row_height), b"Terrain: On")
+    y += row_height
+    GuiLabel(
+        Rectangle(x, y, 220, row_height),
+        b"Terrain Grid: %d x %d" % (
+            motion.terrain_height_grid["num_x"],
+            motion.terrain_height_grid["num_z"],
+        ),
+    )
+    y += row_height
+    GuiLabel(Rectangle(x, y, 220, row_height), b"Terrain H: %.4f" % frame_state.terrain_height_at_focus)
+    y += row_height
+    GuiLabel(
+        Rectangle(x, y, 220, row_height),
+        b"Terrain Samples: %d" % len(terrain_provider.sample_positions),
+    )
+    y += row_height
+    GuiLabel(
+        Rectangle(x, y, 220, row_height),
+        b"Terrain N: [% .2f % .2f % .2f]" % (
+            frame_state.terrain_normal_at_focus[0],
+            frame_state.terrain_normal_at_focus[1],
+            frame_state.terrain_normal_at_focus[2],
+        ),
+    )
+    return y + row_height

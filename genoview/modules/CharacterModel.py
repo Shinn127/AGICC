@@ -2,10 +2,11 @@ import cffi
 import numpy as np
 import struct
 
-from pyray import Model, Mesh, BoneInfo, Transform, Matrix
+from pyray import Model, Mesh, BoneInfo, Transform, Matrix, Vector3
 from raylib import *
 
-import quat
+from genoview.State import SceneResources
+from genoview.utils import quat
 
 
 ffi = cffi.FFI()
@@ -91,3 +92,26 @@ def UpdateModelPoseFromNumpyArrays(model, bindPos, bindRot, animPos, animRot):
 
     matArray[:,:3,:3] = quat.to_xform(meshRot)
     matArray[:,:3,3] = meshPos
+
+
+def LoadSceneResources(resource_path):
+    ground_model = LoadModelFromMesh(GenMeshPlane(20.0, 20.0, 10, 10))
+    geno_model = LoadCharacterModel(resource_path("Geno.bin", as_bytes=True))
+    bind_pos, bind_rot = GetModelBindPoseAsNumpyArrays(geno_model)
+
+    return SceneResources(
+        ground_model=ground_model,
+        ground_position=Vector3(0.0, -0.01, 0.0),
+        geno_model=geno_model,
+        pose_model=None,
+        geno_position=Vector3(0.0, 0.0, 0.0),
+        bind_pos=bind_pos,
+        bind_rot=bind_rot,
+    )
+
+
+def UnloadSceneResources(scene):
+    if scene.pose_model is not None:
+        UnloadModel(scene.pose_model)
+    UnloadModel(scene.geno_model)
+    UnloadModel(scene.ground_model)

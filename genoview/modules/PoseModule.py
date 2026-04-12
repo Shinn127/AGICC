@@ -1,23 +1,7 @@
 import numpy as np
 
-import quat
-from RootModule import DEFAULT_BVH_FRAME_TIME
-from Utils import ComputeFiniteDifferenceVelocities
-
-__all__ = [
-    "BuildPoseSource",
-    "BuildLocalPose",
-    "BuildDefaultPoseFeature",
-    "ReconstructPoseWorldSpace",
-    "ComputePosePositionError",
-]
-
-
-# Public pose pipeline.
-
-def _compute_pose_velocities(globalPositions, dt=DEFAULT_BVH_FRAME_TIME):
-    return ComputeFiniteDifferenceVelocities(globalPositions, dt)
-
+from genoview.utils import quat
+from genoview.modules.RootModule import DEFAULT_BVH_FRAME_TIME, ComputeFiniteDifferenceVelocities
 
 def _compute_pose_angular_velocities(globalRotations, dt=DEFAULT_BVH_FRAME_TIME):
     globalRotations = np.asarray(globalRotations, dtype=np.float32)
@@ -68,7 +52,7 @@ def BuildPoseSource(
         "global_positions": np.asarray(globalPositions, dtype=np.float32),
         "global_rotations": np.asarray(globalRotations, dtype=np.float32),
     }
-    poseSource["global_velocities"] = _compute_pose_velocities(poseSource["global_positions"], dt)
+    poseSource["global_velocities"] = ComputeFiniteDifferenceVelocities(poseSource["global_positions"], dt)
     poseSource["global_angular_velocities"] = _compute_pose_angular_velocities(
         poseSource["global_rotations"],
         dt,
@@ -124,22 +108,6 @@ def BuildLocalPose(
         "root_local_velocity": rootLocalVelocity,
         "root_local_angular_velocity": rootLocalAngularVelocity,
     }
-
-
-def BuildDefaultPoseFeature(localPose, includeRootMotion=True):
-    featureParts = [
-        localPose["local_positions"].reshape(-1),
-        localPose["local_rotations_6d"].reshape(-1),
-        localPose["local_velocities"].reshape(-1),
-    ]
-
-    if includeRootMotion:
-        featureParts.extend([
-            localPose["root_local_velocity"].reshape(-1),
-            localPose["root_local_angular_velocity"].reshape(-1),
-        ])
-
-    return np.concatenate(featureParts).astype(np.float32)
 
 
 def _convert_6d_rotations_to_local_rotations(localRotations6D):
