@@ -51,6 +51,10 @@ CLIP_PRIORS = (
 )
 
 DEFAULT_TRANSITION_FRAMES = 8
+WALK_SPEED_LOW = 0.15
+WALK_SPEED_HIGH = 1.60
+RUN_SPEED_THRESHOLD = 1.50
+RUN_SPEED_SCALE = 0.85
 
 _CLIP_PRIOR_PREFIX_MAP = (
     ("walk", CLIP_PRIOR_WALK),
@@ -460,8 +464,8 @@ def BuildAutoLabelScores(featureSource) -> np.ndarray:
     fallingVelocity = _score_less(verticalSpeed, -0.2, 0.4)
     lowVerticalMotion = _score_less(np.abs(verticalSpeed), 0.16, 0.24)
     idleSpeed = _score_less(speed, 0.12, 0.12)
-    walkSpeed = _score_range(speed, 0.15, 1.15)
-    runSpeed = _score_greater(speed, 1.0, 0.9)
+    walkSpeed = _score_range(speed, WALK_SPEED_LOW, WALK_SPEED_HIGH)
+    runSpeed = _score_greater(speed, RUN_SPEED_THRESHOLD, RUN_SPEED_SCALE)
     lowGroundSpeed = _score_less(speed, 0.8, 0.7)
     lowEnergy = _score_less(motionEnergy, 0.55, 0.35)
     upperBodyDominance = np.clip(_safe_normalize(upperBodyEnergy) - 0.5 * _safe_normalize(speed), 0.0, 1.0)
@@ -513,8 +517,8 @@ def BuildAutoLabelScores(featureSource) -> np.ndarray:
         scores[:, LABEL_TO_INDEX[LABEL_WALK]] += 0.35
         scores[:, LABEL_TO_INDEX[LABEL_OTHER]] -= 0.15
     elif clipPrior == CLIP_PRIOR_RUN:
-        scores[:, LABEL_TO_INDEX[LABEL_RUN]] += 0.45
-        scores[:, LABEL_TO_INDEX[LABEL_WALK]] += 0.15
+        scores[:, LABEL_TO_INDEX[LABEL_RUN]] += 0.3
+        scores[:, LABEL_TO_INDEX[LABEL_WALK]] += 0.25
     elif clipPrior == CLIP_PRIOR_JUMP:
         scores[:, LABEL_TO_INDEX[LABEL_JUMP]] += 0.6
     elif clipPrior == CLIP_PRIOR_FALL_RECOVERY:

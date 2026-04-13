@@ -76,6 +76,8 @@ class DebugState:
     annotation_status: str
     playback: Any
     module_dropdown_open: bool = False
+    clip_dropdown_open: bool = False
+    clip_dropdown_scroll: int = 0
 
 
 @dataclass

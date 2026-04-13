@@ -43,11 +43,12 @@ from genoview.GUI import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 RESOURCES_DIR = PROJECT_ROOT / "resources"
+BVH_ROOT = PROJECT_ROOT.parent / "bvh"
 
-# 手工指定启动 BVH 的入口。优先使用相对 resources/ 的路径，例如：
-# "bvh/lafan1/jumps1_subject1.bvh"
-STARTUP_BVH_CLIP = "bvh/lafan1/jumps1_subject1.bvh"
-BVH_CLIP_DIR = "bvh/lafan1"
+# 手工指定启动 BVH 的入口。优先使用相对 ../bvh/ 的路径，例如：
+# "lafan1/jumps1_subject1.bvh"
+STARTUP_BVH_CLIP = "lafan1/jumps1_subject1.bvh"
+BVH_CLIP_DIR = "lafan1"
 
 
 def resource_path(*parts, as_bytes=False):
@@ -55,9 +56,14 @@ def resource_path(*parts, as_bytes=False):
     return str(path).encode("utf-8") if as_bytes else str(path)
 
 
+def bvh_path(*parts, as_bytes=False):
+    path = BVH_ROOT.joinpath(*parts)
+    return str(path).encode("utf-8") if as_bytes else str(path)
+
+
 def _discover_startup_clips():
     clip_resources = DiscoverBVHClips(
-        RESOURCES_DIR,
+        BVH_ROOT,
         default_bvh_dir=BVH_CLIP_DIR,
         default_bvh_clip=STARTUP_BVH_CLIP,
     )
@@ -70,7 +76,7 @@ def _create_app_state(screen_width, screen_height):
     scene = LoadSceneResources(resource_path)
     clip_resources = _discover_startup_clips()
     clip_index = GetClipIndex(clip_resources, STARTUP_BVH_CLIP)
-    motion = LoadMotionResources(resource_path, clip_resources[clip_index])
+    motion = LoadMotionResources(bvh_path, clip_resources[clip_index])
     debug = CreateDebugState(motion.bvh_animation.frame_count, motion.bvh_frame_time)
     app = AppState(
         screen_width=screen_width,
@@ -157,7 +163,7 @@ def main():
             RenderFrame(app, frame_state)
 
             rlEnableColorBlend()
-            DrawAppUI(app, frame_state, resource_path)
+            DrawAppUI(app, frame_state, bvh_path)
             EndDrawing()
     finally:
         _unload_app_resources(app)

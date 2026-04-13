@@ -104,7 +104,7 @@ def RequestFeatureLoad(app, feature_id):
     return False
 
 
-def RequestClipSwitch(app, clip_index, resource_path):
+def RequestClipSwitch(app, clip_index, bvh_path):
     clip_index = int(clip_index) % len(app.clip_resources)
     clip_resource = app.clip_resources[clip_index]
     request_id = BeginAsyncProgress(
@@ -118,7 +118,7 @@ def RequestClipSwitch(app, clip_index, resource_path):
     if app.pending_clip_load is not None:
         app.pending_clip_load.future.cancel()
 
-    future = app.clip_load_executor.submit(LoadMotionResources, resource_path, clip_resource)
+    future = app.clip_load_executor.submit(LoadMotionResources, bvh_path, clip_resource)
     app.pending_clip_load = PendingClipLoad(
         request_id=request_id,
         clip_index=clip_index,

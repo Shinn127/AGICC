@@ -8,8 +8,8 @@ from genoview.modules.RootModule import DEFAULT_BVH_FRAME_TIME, GetRootTrajector
 from genoview.utils import bvh, quat
 
 
-DEFAULT_BVH_CLIP = "bvh/lafan1/jumps1_subject1.bvh"
-DEFAULT_BVH_DIR = "bvh/lafan1"
+DEFAULT_BVH_CLIP = "lafan1/jumps1_subject1.bvh"
+DEFAULT_BVH_DIR = "lafan1"
 
 
 @dataclass(frozen=True)
@@ -70,10 +70,10 @@ class BVHImporter:
         )
 
 
-def DiscoverBVHClips(resources_dir, default_bvh_dir=DEFAULT_BVH_DIR, default_bvh_clip=DEFAULT_BVH_CLIP):
-    bvh_dir = resources_dir / default_bvh_dir
+def DiscoverBVHClips(bvh_root, default_bvh_dir=DEFAULT_BVH_DIR, default_bvh_clip=DEFAULT_BVH_CLIP):
+    bvh_dir = bvh_root / default_bvh_dir
     clips = [
-        str(path.relative_to(resources_dir))
+        str(path.relative_to(bvh_root))
         for path in sorted(bvh_dir.glob("*.bvh"))
     ]
     return clips if clips else [default_bvh_clip]
@@ -86,8 +86,8 @@ def GetClipIndex(clip_resources, clip_resource):
         return 0
 
 
-def LoadMotionResources(resource_path, clip_resource=DEFAULT_BVH_CLIP):
-    bvh_animation = BVHImporter.load(resource_path(clip_resource), scale=0.01)
+def LoadMotionResources(bvh_path, clip_resource=DEFAULT_BVH_CLIP):
+    bvh_animation = BVHImporter.load(bvh_path(clip_resource), scale=0.01)
     return MotionResources(
         clip_resource=clip_resource,
         clip_name=Path(clip_resource).stem,

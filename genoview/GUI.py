@@ -187,6 +187,90 @@ def _draw_action_label_button(bounds, label, selected=False):
     return was_pressed
 
 
+def _clip_display_name(clip_resource):
+    clip_path = Path(str(clip_resource))
+    if clip_path.parent == Path("."):
+        return clip_path.name
+    return str(clip_path)
+
+
+def _draw_clip_dropdown(app, x, y, width, request_clip_index, open_up=False):
+    debug = app.debug
+    clips = app.clip_resources
+    if not clips:
+        GuiButton(Rectangle(x, y, width, 24), b"No clips")
+        return False
+
+    row_height = 22
+    visible_rows = min(8, len(clips))
+    current_label = _clip_display_name(clips[app.clip_index])
+    if len(current_label) > 42:
+        current_label = "..." + current_label[-39:]
+
+    if GuiButton(Rectangle(x, y, width, 24), ("Clip: %s" % current_label).encode("utf-8")):
+        debug.clip_dropdown_open = not debug.clip_dropdown_open
+        debug.clip_dropdown_scroll = min(
+            max(app.clip_index - visible_rows // 2, 0),
+            max(0, len(clips) - visible_rows),
+        )
+
+    if not debug.clip_dropdown_open:
+        return False
+
+    max_scroll = max(0, len(clips) - visible_rows)
+    debug.clip_dropdown_scroll = min(max(int(debug.clip_dropdown_scroll), 0), max_scroll)
+
+    panel_height = visible_rows * row_height
+    panel_y = y - 4 - panel_height if open_up else y + 28
+    panel_rect = Rectangle(x, panel_y, width, panel_height)
+    button_rect = Rectangle(x, y, width, 24)
+    mouse = GetMousePosition()
+    hovering_panel = CheckCollisionPointRec(mouse, panel_rect)
+    hovering_button = CheckCollisionPointRec(mouse, button_rect)
+
+    if hovering_panel:
+        wheel = GetMouseWheelMove()
+        if wheel != 0:
+            scroll_delta = -1 if wheel > 0 else 1
+            debug.clip_dropdown_scroll = min(
+                max(debug.clip_dropdown_scroll + scroll_delta, 0),
+                max_scroll,
+            )
+
+    DrawRectangleRec(panel_rect, Fade(RAYWHITE, 0.96))
+    DrawRectangleLinesEx(panel_rect, 1.0, DARKGRAY)
+
+    start_index = debug.clip_dropdown_scroll
+    end_index = min(len(clips), start_index + visible_rows)
+    BeginScissorMode(int(panel_rect.x), int(panel_rect.y), int(panel_rect.width), int(panel_rect.height))
+    for row_index, clip_index in enumerate(range(start_index, end_index)):
+        row_rect = Rectangle(x, panel_y + row_index * row_height, width, row_height)
+        is_selected = clip_index == app.clip_index
+        is_hovered = CheckCollisionPointRec(mouse, row_rect)
+        if is_selected:
+            DrawRectangleRec(row_rect, Fade(SKYBLUE, 0.35))
+        elif is_hovered:
+            DrawRectangleRec(row_rect, Fade(LIGHTGRAY, 0.45))
+
+        label = _clip_display_name(clips[clip_index])
+        if len(label) > 48:
+            label = "..." + label[-45:]
+        DrawText(label.encode("utf-8"), int(row_rect.x + 8), int(row_rect.y + 6), 10, DARKGRAY)
+
+        if is_hovered and IsMouseButtonPressed(0):
+            debug.clip_dropdown_open = False
+            if clip_index != app.clip_index:
+                request_clip_index(app, clip_index)
+                EndScissorMode()
+                return True
+    EndScissorMode()
+
+    if not hovering_button and not hovering_panel and IsMouseButtonPressed(0):
+        debug.clip_dropdown_open = False
+
+    return False
+
+
 def HandleLabelFeatureShortcuts(app, label_result, save_annotations, load_annotations, export_labels):
     debug = app.debug
     selection_start, selection_end = debug.playback.selection_range
@@ -246,7 +330,7 @@ def DrawLabelFeatureUI(
     save_annotations,
     load_annotations,
     export_labels,
-    switch_clip_offset):
+    switch_clip_index):
 
     debug = app.debug
     selection_start, selection_end = debug.playback.selection_range
@@ -267,15 +351,7 @@ def DrawLabelFeatureUI(
         if GuiButton(button_rect, mode_label):
             debug.selected_timeline_mode = mode_key
             timeline_mode = mode_key
-    GuiLabel(
-        Rectangle(30, 300, 130, 20),
-        b"Clip: %d / %d" % (app.clip_index + 1, len(app.clip_resources)),
-    )
-    if GuiButton(Rectangle(170, 298, 90, 22), b"Prev Clip"):
-        switch_clip_offset(app, -1)
-        return False
-    if GuiButton(Rectangle(270, 298, 90, 22), b"Next Clip"):
-        switch_clip_offset(app, 1)
+    if _draw_clip_dropdown(app, 30, 298, 330, switch_clip_index, open_up=True):
         return False
 
     GuiGroupBox(Rectangle(20, 338, 360, 260), b"Annotate")
@@ -443,7 +519,7 @@ def _handle_annotation_shortcuts(app):
     )
 
 
-def DrawAppUI(app, frame_state, resource_path):
+def DrawAppUI(app, frame_state, bvh_path):
     debug = app.debug
     screen_width = app.screen_width
     screen_height = app.screen_height
@@ -477,8 +553,8 @@ def DrawAppUI(app, frame_state, resource_path):
     GuiLabel(Rectangle(30, 140, 150, 20), b"Altitude: %5.3f" % app.camera.altitude)
     GuiLabel(Rectangle(30, 160, 150, 20), b"Distance: %5.3f" % app.camera.distance)
 
-    def switch_clip_offset(callback_app, offset):
-        RequestClipSwitch(callback_app, callback_app.clip_index + int(offset), resource_path)
+    def switch_clip_index(callback_app, clip_index):
+        RequestClipSwitch(callback_app, clip_index, bvh_path)
 
     if debug.label_module_ptr[0]:
         if IsClipFeatureReady(app, "labels"):
@@ -491,7 +567,7 @@ def DrawAppUI(app, frame_state, resource_path):
                 SaveCurrentAnnotations,
                 LoadCurrentAnnotations,
                 ExportCurrentLabels,
-                switch_clip_offset,
+                switch_clip_index,
             ):
                 return
         else:
@@ -504,11 +580,7 @@ def DrawAppUI(app, frame_state, resource_path):
         GuiLabel(Rectangle(30, 220, 220, 20), ("Clip: %s" % frame_state.clip_name).encode("utf-8"))
         GuiLabel(Rectangle(260, 220, 100, 20), b"FPS: %d" % GetFPS())
         GuiLabel(Rectangle(30, 242, 150, 20), b"Labels: off")
-        if GuiButton(Rectangle(170, 245, 90, 24), b"Prev Clip"):
-            switch_clip_offset(app, -1)
-            return
-        if GuiButton(Rectangle(270, 245, 90, 24), b"Next Clip"):
-            switch_clip_offset(app, 1)
+        if _draw_clip_dropdown(app, 30, 245, 330, switch_clip_index, open_up=True):
             return
 
     DrawRenderingOptionsPanel(

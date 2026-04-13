@@ -315,12 +315,13 @@ def UpdateTracking(app, frame_state):
         Vector3Scale(render.light_dir, -5.0),
     )
 
+    mouse_wheel = 0.0 if getattr(app.debug, "clip_dropdown_open", False) else GetMouseWheelMove()
     app.camera.update(
         Vector3(frame_state.hip_position.x, 0.75, frame_state.hip_position.z),
         GetMouseDelta().x if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(0) else 0.0,
         GetMouseDelta().y if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(0) else 0.0,
         GetMouseDelta().x if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(1) else 0.0,
         GetMouseDelta().y if IsKeyDown(KEY_LEFT_CONTROL) and IsMouseButtonDown(1) else 0.0,
-        GetMouseWheelMove(),
+        mouse_wheel,
         GetFrameTime(),
     )
