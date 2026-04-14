@@ -192,6 +192,16 @@ class MANNDataset(Dataset):
         self.action_ids = self.data["action_ids"].astype(np.int64)
         self.clip_names = self.data["clip_names"]
         self.frame_indices = self.data["frame_indices"].astype(np.int64)
+        self.mirror_flags = (
+            self.data["mirror_flags"].astype(np.uint8)
+            if "mirror_flags" in self.data.files else
+            np.zeros((len(self.y),), dtype=np.uint8)
+        )
+        self.variant_names = (
+            self.data["variant_names"]
+            if "variant_names" in self.data.files else
+            self.clip_names
+        )
 
         if indices is None:
             self.indices = np.arange(len(self.y), dtype=np.int64)

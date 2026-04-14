@@ -2,6 +2,14 @@ from pathlib import Path
 import argparse
 import json
 import random
+import sys
+
+MANN_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = MANN_ROOT
+if REPO_ROOT.name == "MANN":
+    REPO_ROOT = REPO_ROOT.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np
 import torch
@@ -12,8 +20,12 @@ except ImportError:
     def tqdm(iterable=None, *args, **kwargs):
         return iterable
 
-from MANNDataset import build_mann_dataloaders
-from MANNModel import MANN, mann_mse_loss
+from MANN.MANNDataset import build_mann_dataloaders
+from MANN.MANNModel import MANN, mann_mse_loss
+
+
+DEFAULT_DATASET_PATH = Path("MANN/output/mann/stage2_locomotion_database.npz")
+DEFAULT_OUTPUT_DIR = Path("MANN/output/mann/checkpoints_stage2")
 
 
 def set_seed(seed):
@@ -92,8 +104,8 @@ def save_checkpoint(path, model, optimizer, epoch, best_val_loss, spec, args):
 
 def build_arg_parser():
     parser = argparse.ArgumentParser(description="Train a PyTorch MANN model from exported MANN databases.")
-    parser.add_argument("--dataset", type=Path, required=True, help="Path to the exported MANN database (.npz).")
-    parser.add_argument("--output-dir", type=Path, default=Path("output/mann/checkpoints"), help="Directory for checkpoints and logs.")
+    parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET_PATH, help="Path to the exported MANN database (.npz).")
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Directory for checkpoints and logs.")
     parser.add_argument("--split-path", type=Path, default=None, help="Optional JSON path for clip-level train/val/test splits.")
     parser.add_argument("--stats-path", type=Path, default=None, help="Optional NPZ path for normalization statistics.")
     parser.add_argument("--epochs", type=int, default=20, help="Number of training epochs.")

@@ -3,7 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import argparse
+import sys
 from types import SimpleNamespace
+
+MANN_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = MANN_ROOT
+if REPO_ROOT.name == "MANN":
+    REPO_ROOT = REPO_ROOT.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np
 import torch
@@ -19,7 +27,7 @@ from genoview.modules.CharacterModel import (
     UpdateModelPoseFromNumpyArrays,
 )
 from genoview.utils.DebugDraw import DrawRootTrajectoryDebug
-from HumanoidLocomotionConfig import (
+from MANN.HumanoidLocomotionConfig import (
     HUMANOID_LOCOMOTION_ACTION_LABELS,
     HUMANOID_LOCOMOTION_GATING_JOINTS,
     HUMANOID_LOCOMOTION_PREDICTION_JOINTS,
@@ -27,8 +35,8 @@ from HumanoidLocomotionConfig import (
     HUMANOID_LOCOMOTION_TRAJECTORY_FUTURE_SAMPLE_INDICES,
     HUMANOID_LOCOMOTION_TRAJECTORY_SAMPLE_OFFSETS,
 )
-from MANNDataset import MANNDataSpec, MANNFeatureStats
-from MANNModel import MANN, MANNModelConfig
+from MANN.MANNDataset import MANNDataSpec, MANNFeatureStats
+from MANN.MANNModel import MANN, MANNModelConfig
 from genoview.modules.PoseModule import BuildLocalPose, BuildPoseSource, ReconstructPoseWorldSpace
 from genoview.modules.RootModule import (
     ROOT_JOINT_INDEX,
@@ -55,9 +63,10 @@ from genoview.modules.RenderModule import (
 )
 
 
-DEFAULT_DATABASE_PATH = Path("output/mann/stage2_locomotion_database.npz")
-DEFAULT_CHECKPOINT_PATH = Path("output/mann/checkpoints_stage2/best.pt")
-DEFAULT_STATS_PATH = Path("output/mann/checkpoints_stage2/stats.npz")
+DEFAULT_MANN_OUTPUT_DIR = MANN_ROOT / "output" / "mann"
+DEFAULT_DATABASE_PATH = DEFAULT_MANN_OUTPUT_DIR / "stage2_locomotion_database.npz"
+DEFAULT_CHECKPOINT_PATH = DEFAULT_MANN_OUTPUT_DIR / "checkpoints_stage2" / "best.pt"
+DEFAULT_STATS_PATH = DEFAULT_MANN_OUTPUT_DIR / "checkpoints_stage2" / "stats.npz"
 DEFAULT_VIEWER_CLIP = Path("bvh/Geno_stance.bvh")
 DEFAULT_INITIAL_FRAME = 0
 DEFAULT_SCREEN_WIDTH = 1280
@@ -66,11 +75,11 @@ DEFAULT_WALK_SPEED = 1.5
 DEFAULT_RUN_SPEED = 3.0
 DEFAULT_MOVE_HALFLIFE = 0.2
 DEFAULT_ROTATION_HALFLIFE = 0.15
+DEFAULT_GAMEPAD_ID = 0
 DEFAULT_GAMEPAD_DEADZONE = 0.2
 DEFAULT_TRAJECTORY_BUFFER_BLEND = 0.35
 DEFAULT_Y_FUTURE_BLEND = 0.5
-PROJECT_ROOT = Path(__file__).resolve().parent
-RESOURCES_DIR = PROJECT_ROOT / "resources"
+RESOURCES_DIR = REPO_ROOT / "resources"
 
 
 def resource_path(*parts, as_bytes=False):
@@ -100,6 +109,7 @@ class ViewerConfig:
     initial_frame: int = DEFAULT_INITIAL_FRAME
     screen_width: int = DEFAULT_SCREEN_WIDTH
     screen_height: int = DEFAULT_SCREEN_HEIGHT
+    gamepad_id: int = DEFAULT_GAMEPAD_ID
 
 
 @dataclass
@@ -705,6 +715,52 @@ def _make_action_one_hot(action_label: str) -> np.ndarray:
     return action_one_hot
 
 
+def _shape_gamepad_stick(x: float, y: float, deadzone: float = DEFAULT_GAMEPAD_DEADZONE) -> np.ndarray:
+    stick = np.asarray([x, y], dtype=np.float32)
+    magnitude = float(np.linalg.norm(stick))
+    if magnitude <= deadzone:
+        return np.zeros(2, dtype=np.float32)
+
+    direction = stick / magnitude
+    shaped_magnitude = min(magnitude * magnitude, 1.0)
+    return (direction * shaped_magnitude).astype(np.float32)
+
+
+def _read_gamepad_stick(gamepad_id: int, left: bool, deadzone: float = DEFAULT_GAMEPAD_DEADZONE) -> np.ndarray:
+    axis_x = GAMEPAD_AXIS_LEFT_X if left else GAMEPAD_AXIS_RIGHT_X
+    axis_y = GAMEPAD_AXIS_LEFT_Y if left else GAMEPAD_AXIS_RIGHT_Y
+    return _shape_gamepad_stick(
+        GetGamepadAxisMovement(gamepad_id, axis_x),
+        GetGamepadAxisMovement(gamepad_id, axis_y),
+        deadzone=deadzone,
+    )
+
+
+def _read_gamepad_input(app) -> RawInputState:
+    gamepad_id = getattr(app, "gamepad_id", DEFAULT_GAMEPAD_ID)
+    if not IsGamepadAvailable(gamepad_id):
+        return RawInputState(
+            input_source="gamepad:none",
+            reset_pressed=bool(IsKeyPressed(KEY_R)),
+        )
+
+    left_stick = _read_gamepad_stick(gamepad_id, left=True)
+    right_stick = _read_gamepad_stick(gamepad_id, left=False)
+    right_trigger = float(GetGamepadAxisMovement(gamepad_id, GAMEPAD_AXIS_RIGHT_TRIGGER))
+    left_trigger = float(GetGamepadAxisMovement(gamepad_id, GAMEPAD_AXIS_LEFT_TRIGGER))
+
+    return RawInputState(
+        input_source=f"gamepad:{gamepad_id}",
+        move_2d=left_stick,
+        look_2d=right_stick,
+        look_active=bool(np.linalg.norm(right_stick) > 1e-3),
+        run_pressed=bool(right_trigger > 0.5 or IsGamepadButtonDown(gamepad_id, GAMEPAD_BUTTON_RIGHT_TRIGGER_2)),
+        desired_strafe=bool(left_trigger > 0.5 or IsGamepadButtonDown(gamepad_id, GAMEPAD_BUTTON_LEFT_TRIGGER_2)),
+        jump_pressed=bool(IsGamepadButtonPressed(gamepad_id, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)),
+        reset_pressed=bool(IsGamepadButtonPressed(gamepad_id, GAMEPAD_BUTTON_MIDDLE_RIGHT) or IsKeyPressed(KEY_R)),
+    )
+
+
 def _read_keyboard_input(app) -> RawInputState:
     move_x = float(IsKeyDown(KEY_D) - IsKeyDown(KEY_A))
     move_y = float(IsKeyDown(KEY_W) - IsKeyDown(KEY_S))
@@ -755,8 +811,8 @@ def _derive_control_intent(input_state: RawInputState, camera: Camera, root_rota
     ).astype(np.float32)
 
     move_world = quat.mul_vec(
-        root_rotation,
-        np.asarray([-input_state.move_2d[0], 0.0, input_state.move_2d[1]], dtype=np.float32),
+        camera_rotation,
+        np.asarray([input_state.move_2d[0], 0.0, input_state.move_2d[1]], dtype=np.float32),
     ).astype(np.float32)
     look_world = quat.mul_vec(
         camera_rotation,
@@ -1041,6 +1097,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--frame", type=int, default=DEFAULT_INITIAL_FRAME, help="Frame index used as the initial static pose.")
     parser.add_argument("--screen-width", type=int, default=DEFAULT_SCREEN_WIDTH, help="Viewer window width.")
     parser.add_argument("--screen-height", type=int, default=DEFAULT_SCREEN_HEIGHT, help="Viewer window height.")
+    parser.add_argument("--gamepad-id", type=int, default=DEFAULT_GAMEPAD_ID, help="Gamepad id used by the viewer controls.")
     return parser
 
 
@@ -1199,13 +1256,14 @@ def _create_viewer_state(config: ViewerConfig):
         current_features=current_features,
         debug_prediction=None,
         local_debug_origin=Vector3(-2.0, 0.0, 0.0),
+        gamepad_id=int(config.gamepad_id),
         mouse_look_anchor=None,
     )
 
 
 def _update_static_tracking(app):
     dt = max(1e-6, float(GetFrameTime()))
-    app.input_state = _read_keyboard_input(app)
+    app.input_state = _read_gamepad_input(app)
     if app.input_state.reset_pressed:
         app.runtime_state = _make_runtime_state(
             app.motion.initial_local_pose,
@@ -1483,8 +1541,8 @@ def _draw_static_ui(app, frame_state):
     GuiLabel(Rectangle(30, 30, 340, 20), b"Ctrl + Left Click - Rotate")
     GuiLabel(Rectangle(30, 50, 340, 20), b"Ctrl + Right Click - Pan")
     GuiLabel(Rectangle(30, 70, 340, 20), b"Mouse Scroll - Zoom")
-    GuiLabel(Rectangle(30, 90, 340, 20), b"WASD move, RMB + mouse look, Shift run")
-    GuiLabel(Rectangle(30, 110, 340, 20), b"Ctrl strafe, Space jump, R reset")
+    GuiLabel(Rectangle(30, 90, 340, 20), b"Left Stick move, Right Stick face")
+    GuiLabel(Rectangle(30, 110, 340, 20), b"RT run, LT strafe, A jump, Start reset")
     GuiLabel(Rectangle(30, 130, 340, 20), f"Clip: {frame_state.clip_label}".encode("utf-8"))
     GuiLabel(Rectangle(30, 150, 340, 20), f"Frame: {frame_state.frame_index}  Action: {frame_state.action_label}".encode("utf-8"))
     GuiLabel(Rectangle(30, 170, 340, 20), b"Blue Geno = model local prediction")
@@ -1505,6 +1563,7 @@ def _draw_static_ui(app, frame_state):
     GuiLabel(
         Rectangle(30, 250, 340, 20),
         (
+            f"Source: {frame_state.input_state.input_source}  "
             f"Move: [{frame_state.input_state.move_2d[0]: .2f} "
             f"{frame_state.input_state.move_2d[1]: .2f}]"
         ).encode("utf-8"),
@@ -1599,6 +1658,7 @@ def _run_static_viewer(args) -> None:
         initial_frame=args.frame,
         screen_width=args.screen_width,
         screen_height=args.screen_height,
+        gamepad_id=args.gamepad_id,
     )
 
     SetConfigFlags(FLAG_VSYNC_HINT)

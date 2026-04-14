@@ -84,6 +84,7 @@ HUMANOID_LOCOMOTION_CONTACT_CONFIGS = (
 )
 
 HUMANOID_LOCOMOTION_ACTION_LABELS = (
+    "idle",
     "walk",
     "run",
     "jump",

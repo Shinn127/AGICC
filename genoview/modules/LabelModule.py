@@ -51,10 +51,15 @@ CLIP_PRIORS = (
 )
 
 DEFAULT_TRANSITION_FRAMES = 8
+IDLE_SPEED_THRESHOLD = 0.135
 WALK_SPEED_LOW = 0.15
 WALK_SPEED_HIGH = 1.60
 RUN_SPEED_THRESHOLD = 1.50
 RUN_SPEED_SCALE = 0.85
+TPOSE_ARM_SIDE_ALIGNMENT = 0.75
+TPOSE_ARM_OPPOSITION_DOT = -0.75
+TPOSE_MAX_VERTICAL_RATIO = 0.25
+TPOSE_MIN_ARM_LENGTH = 0.15
 
 _CLIP_PRIOR_PREFIX_MAP = (
     ("walk", CLIP_PRIOR_WALK),
@@ -364,6 +369,79 @@ def _compute_motion_energy(poseSource, jointNames=None):
     return motionEnergy, upperBodyEnergy
 
 
+def _find_joint_index(jointNames, jointName):
+    if not jointNames:
+        return None
+
+    targetName = str(jointName).lower()
+    for index, name in enumerate(jointNames):
+        if str(name).lower() == targetName:
+            return index
+    return None
+
+
+def _normalize_vector_series(vectors, fallback):
+    vectors = np.asarray(vectors, dtype=np.float32)
+    fallback = np.asarray(fallback, dtype=np.float32)
+    result = np.broadcast_to(fallback, vectors.shape).copy().astype(np.float32)
+    norms = np.linalg.norm(vectors, axis=-1)
+    validMask = norms > 1e-8
+    result[validMask] = vectors[validMask] / norms[validMask, np.newaxis]
+    return result
+
+
+def _compute_t_pose_mask(globalPositions, rootDirections, jointNames=None):
+    globalPositions = np.asarray(globalPositions, dtype=np.float32)
+    rootDirections = np.asarray(rootDirections, dtype=np.float32)
+    frameCount = int(len(globalPositions))
+    if frameCount == 0 or globalPositions.ndim != 3 or not jointNames:
+        return np.zeros((frameCount,), dtype=np.float32)
+
+    leftShoulderIndex = _find_joint_index(jointNames, "LeftShoulder")
+    leftHandIndex = _find_joint_index(jointNames, "LeftHand")
+    rightShoulderIndex = _find_joint_index(jointNames, "RightShoulder")
+    rightHandIndex = _find_joint_index(jointNames, "RightHand")
+    if None in (leftShoulderIndex, leftHandIndex, rightShoulderIndex, rightHandIndex):
+        return np.zeros((frameCount,), dtype=np.float32)
+
+    leftArm = globalPositions[:, leftHandIndex] - globalPositions[:, leftShoulderIndex]
+    rightArm = globalPositions[:, rightHandIndex] - globalPositions[:, rightShoulderIndex]
+    leftLength = np.linalg.norm(leftArm, axis=-1)
+    rightLength = np.linalg.norm(rightArm, axis=-1)
+    longEnough = (leftLength > TPOSE_MIN_ARM_LENGTH) & (rightLength > TPOSE_MIN_ARM_LENGTH)
+
+    leftVerticalRatio = np.abs(leftArm[:, 1]) / np.maximum(leftLength, 1e-8)
+    rightVerticalRatio = np.abs(rightArm[:, 1]) / np.maximum(rightLength, 1e-8)
+    roughlyHorizontal = (
+        (leftVerticalRatio <= TPOSE_MAX_VERTICAL_RATIO) &
+        (rightVerticalRatio <= TPOSE_MAX_VERTICAL_RATIO)
+    )
+
+    forward = rootDirections.copy()
+    if len(forward) != frameCount:
+        forward = np.zeros((frameCount, 3), dtype=np.float32)
+        forward[:, 2] = 1.0
+    forward[:, 1] = 0.0
+    forward = _normalize_vector_series(forward, np.asarray([0.0, 0.0, 1.0], dtype=np.float32))
+    up = np.asarray([0.0, 1.0, 0.0], dtype=np.float32)
+    side = _normalize_vector_series(np.cross(up[np.newaxis, :], forward), np.asarray([1.0, 0.0, 0.0], dtype=np.float32))
+
+    leftHorizontal = leftArm.copy()
+    rightHorizontal = rightArm.copy()
+    leftHorizontal[:, 1] = 0.0
+    rightHorizontal[:, 1] = 0.0
+    leftHorizontal = _normalize_vector_series(leftHorizontal, np.asarray([-1.0, 0.0, 0.0], dtype=np.float32))
+    rightHorizontal = _normalize_vector_series(rightHorizontal, np.asarray([1.0, 0.0, 0.0], dtype=np.float32))
+
+    sideAligned = (
+        (np.abs(np.sum(leftHorizontal * side, axis=-1)) >= TPOSE_ARM_SIDE_ALIGNMENT) &
+        (np.abs(np.sum(rightHorizontal * side, axis=-1)) >= TPOSE_ARM_SIDE_ALIGNMENT)
+    )
+    armsOpposed = np.sum(leftHorizontal * rightHorizontal, axis=-1) <= TPOSE_ARM_OPPOSITION_DOT
+
+    return (longEnough & roughlyHorizontal & sideAligned & armsOpposed).astype(np.float32)
+
+
 def BuildLabelFeatureSource(
     clipNameOrPath: str,
     globalPositions,
@@ -410,6 +488,7 @@ def BuildLabelFeatureSource(
         rightContact = np.asarray(contactMasks["right_contact"], dtype=np.float32)
 
     motionEnergy, upperBodyEnergy = _compute_motion_energy(poseSource, jointNames=jointNames)
+    tPoseMask = _compute_t_pose_mask(globalPositions, rootDirections, jointNames=jointNames)
     standingHeight = _estimate_standing_height(rootHeightAboveGround)
     lowHeightThreshold = _estimate_low_height_threshold(standingHeight)
 
@@ -433,6 +512,7 @@ def BuildLabelFeatureSource(
         "contact_fraction": contactFraction,
         "motion_energy": motionEnergy,
         "upper_body_energy": upperBodyEnergy,
+        "t_pose_mask": tPoseMask,
         "terrain_heights": terrainHeights,
     }
 
@@ -455,6 +535,7 @@ def BuildAutoLabelScores(featureSource) -> np.ndarray:
     rightContact = np.asarray(featureSource["right_contact"], dtype=np.float32)
     motionEnergy = np.asarray(featureSource["motion_energy"], dtype=np.float32)
     upperBodyEnergy = np.asarray(featureSource["upper_body_energy"], dtype=np.float32)
+    tPoseMask = np.asarray(featureSource.get("t_pose_mask", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
 
     noContact = 1.0 - np.clip(np.maximum(leftContact, rightContact), 0.0, 1.0)
     doubleContact = np.minimum(leftContact, rightContact)
@@ -463,7 +544,7 @@ def BuildAutoLabelScores(featureSource) -> np.ndarray:
     rising = _score_greater(verticalSpeed, 0.15, 0.35)
     fallingVelocity = _score_less(verticalSpeed, -0.2, 0.4)
     lowVerticalMotion = _score_less(np.abs(verticalSpeed), 0.16, 0.24)
-    idleSpeed = _score_less(speed, 0.12, 0.12)
+    idleSpeed = _score_less(speed, IDLE_SPEED_THRESHOLD, 0.12)
     walkSpeed = _score_range(speed, WALK_SPEED_LOW, WALK_SPEED_HIGH)
     runSpeed = _score_greater(speed, RUN_SPEED_THRESHOLD, RUN_SPEED_SCALE)
     lowGroundSpeed = _score_less(speed, 0.8, 0.7)
@@ -474,7 +555,7 @@ def BuildAutoLabelScores(featureSource) -> np.ndarray:
         1.4 * idleSpeed +
         0.8 * lowEnergy +
         0.6 * doubleContact
-    )
+    ) * (1.0 - np.clip(tPoseMask, 0.0, 1.0))
     scores[:, LABEL_TO_INDEX[LABEL_WALK]] = (
         1.4 * walkSpeed +
         0.7 * contactFraction +
@@ -497,9 +578,11 @@ def BuildAutoLabelScores(featureSource) -> np.ndarray:
     )
     scores[:, LABEL_TO_INDEX[LABEL_GROUND]] = (
         1.5 * lowHeight +
-        1.1 * lowVerticalMotion +
-        0.4 * contactFraction +
-        0.3 * lowGroundSpeed
+        lowHeight * (
+            1.1 * lowVerticalMotion +
+            0.4 * contactFraction +
+            0.3 * lowGroundSpeed
+        )
     )
     scores[:, LABEL_TO_INDEX[LABEL_GET_UP]] = (
         1.4 * lowHeight +
