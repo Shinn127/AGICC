@@ -23,6 +23,9 @@ class MotionResources:
     global_rotations: Any
     trajectory_sample_offsets: Any
     bvh_frame_time: float
+    motion_variant: str = "original"
+    mirrored: bool = False
+    mirror_axis: str = "x"
     base_pose_source: Any = None
     bootstrap_contact_data: Any = None
     terrain_provider: Any = None
@@ -105,6 +108,7 @@ class PendingClipLoad:
     request_id: int
     clip_index: int
     clip_resource: str
+    motion_variant: str
     future: Any
 
 
@@ -113,6 +117,7 @@ class PendingFeatureLoad:
     request_id: int
     feature_id: str
     clip_resource: str
+    motion_variant: str
     future: Any
 
 
@@ -120,6 +125,7 @@ class PendingFeatureLoad:
 class FeatureLoadResult:
     feature_id: str
     clip_resource: str
+    motion_variant: str
     motion: MotionResources
 
 
@@ -142,6 +148,8 @@ class AppState:
     feature_load_executor: Any
     pending_feature_loads: Any
     camera: Any
+    mirror_enabled: bool = False
+    mirror_axis: str = "x"
 
 
 @dataclass

@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from genoview.State import MotionResources
+from genoview.modules.MotionMirror import BuildMotionVariantKey, DEFAULT_MIRROR_AXIS, MirrorBVHAnimation
 from genoview.modules.RootModule import DEFAULT_BVH_FRAME_TIME, GetRootTrajectorySampleOffsets
 from genoview.utils import bvh, quat
 
@@ -86,15 +87,30 @@ def GetClipIndex(clip_resources, clip_resource):
         return 0
 
 
-def LoadMotionResources(bvh_path, clip_resource=DEFAULT_BVH_CLIP):
+def LoadMotionResources(
+    bvh_path,
+    clip_resource=DEFAULT_BVH_CLIP,
+    mirrored=False,
+    mirror_axis=DEFAULT_MIRROR_AXIS,
+):
     bvh_animation = BVHImporter.load(bvh_path(clip_resource), scale=0.01)
+    if mirrored:
+        bvh_animation = MirrorBVHAnimation(bvh_animation, axis=mirror_axis)
+
+    clip_name = Path(clip_resource).stem
+    if mirrored:
+        clip_name += " [mirror]"
+
     return MotionResources(
         clip_resource=clip_resource,
-        clip_name=Path(clip_resource).stem,
+        clip_name=clip_name,
         bvh_animation=bvh_animation,
         parents=bvh_animation.parents,
         global_positions=bvh_animation.global_positions,
         global_rotations=bvh_animation.global_rotations,
         trajectory_sample_offsets=GetRootTrajectorySampleOffsets(),
         bvh_frame_time=DEFAULT_BVH_FRAME_TIME,
+        motion_variant=BuildMotionVariantKey(mirrored, mirror_axis),
+        mirrored=bool(mirrored),
+        mirror_axis=str(mirror_axis).lower(),
     )

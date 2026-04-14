@@ -9,6 +9,7 @@ from genoview.modules.FeatureModule import (
     IsClipFeatureReady,
     PrepareFeatureLoad,
 )
+from genoview.modules.MotionMirror import BuildMotionVariantKey
 
 
 def BeginAsyncProgress(app, title, detail="", progress=0.0, indeterminate=False):
@@ -91,6 +92,7 @@ def RequestFeatureLoad(app, feature_id):
         request_id=request_id,
         feature_id=feature_id,
         clip_resource=app.motion.clip_resource,
+        motion_variant=app.motion.motion_variant,
         future=future,
     )
     PostAsyncProgress(
@@ -104,13 +106,16 @@ def RequestFeatureLoad(app, feature_id):
     return False
 
 
-def RequestClipSwitch(app, clip_index, bvh_path):
+def RequestClipSwitch(app, clip_index, bvh_path, mirrored=None, mirror_axis=None):
     clip_index = int(clip_index) % len(app.clip_resources)
     clip_resource = app.clip_resources[clip_index]
+    mirrored = app.mirror_enabled if mirrored is None else bool(mirrored)
+    mirror_axis = app.mirror_axis if mirror_axis is None else str(mirror_axis).lower()
+    motion_variant = BuildMotionVariantKey(mirrored, mirror_axis)
     request_id = BeginAsyncProgress(
         app,
         "Loading clip",
-        Path(clip_resource).name,
+        Path(clip_resource).name + (" [mirror]" if mirrored else ""),
         progress=0.0,
         indeterminate=True,
     )
@@ -118,18 +123,25 @@ def RequestClipSwitch(app, clip_index, bvh_path):
     if app.pending_clip_load is not None:
         app.pending_clip_load.future.cancel()
 
-    future = app.clip_load_executor.submit(LoadMotionResources, bvh_path, clip_resource)
+    future = app.clip_load_executor.submit(
+        LoadMotionResources,
+        bvh_path,
+        clip_resource,
+        mirrored,
+        mirror_axis,
+    )
     app.pending_clip_load = PendingClipLoad(
         request_id=request_id,
         clip_index=clip_index,
         clip_resource=clip_resource,
+        motion_variant=motion_variant,
         future=future,
     )
     PostAsyncProgress(
         app,
         request_id,
         title="Loading clip",
-        detail="Parsing " + Path(clip_resource).name,
+        detail="Parsing " + Path(clip_resource).name + (" [mirror]" if mirrored else ""),
         progress=0.15,
         indeterminate=True,
     )
@@ -184,6 +196,8 @@ def PollAsyncFeatureLoads(app):
     for feature_id in completed_feature_ids:
         pending = app.pending_feature_loads.pop(feature_id)
         if pending.clip_resource != app.motion.clip_resource:
+            continue
+        if pending.motion_variant != app.motion.motion_variant:
             continue
         try:
             result = pending.future.result()

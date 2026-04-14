@@ -271,6 +271,21 @@ def _draw_clip_dropdown(app, x, y, width, request_clip_index, open_up=False):
     return False
 
 
+def _draw_clip_variant_row(app, x, y, width, request_clip_index, request_mirror_toggle, open_up=False):
+    mirror_width = 104
+    gap = 6
+    dropdown_width = max(120, width - mirror_width - gap)
+    if _draw_clip_dropdown(app, x, y, dropdown_width, request_clip_index, open_up=open_up):
+        return True
+
+    mirror_label = b"Mirror: On" if app.mirror_enabled else b"Mirror: Off"
+    if GuiButton(Rectangle(x + dropdown_width + gap, y, mirror_width, 24), mirror_label):
+        request_mirror_toggle(app)
+        return True
+
+    return False
+
+
 def HandleLabelFeatureShortcuts(app, label_result, save_annotations, load_annotations, export_labels):
     debug = app.debug
     selection_start, selection_end = debug.playback.selection_range
@@ -330,7 +345,8 @@ def DrawLabelFeatureUI(
     save_annotations,
     load_annotations,
     export_labels,
-    switch_clip_index):
+    switch_clip_index,
+    switch_mirror_variant):
 
     debug = app.debug
     selection_start, selection_end = debug.playback.selection_range
@@ -351,7 +367,7 @@ def DrawLabelFeatureUI(
         if GuiButton(button_rect, mode_label):
             debug.selected_timeline_mode = mode_key
             timeline_mode = mode_key
-    if _draw_clip_dropdown(app, 30, 298, 330, switch_clip_index, open_up=True):
+    if _draw_clip_variant_row(app, 30, 298, 330, switch_clip_index, switch_mirror_variant, open_up=True):
         return False
 
     GuiGroupBox(Rectangle(20, 338, 360, 260), b"Annotate")
@@ -556,6 +572,14 @@ def DrawAppUI(app, frame_state, bvh_path):
     def switch_clip_index(callback_app, clip_index):
         RequestClipSwitch(callback_app, clip_index, bvh_path)
 
+    def switch_mirror_variant(callback_app):
+        RequestClipSwitch(
+            callback_app,
+            callback_app.clip_index,
+            bvh_path,
+            mirrored=not callback_app.mirror_enabled,
+        )
+
     if debug.label_module_ptr[0]:
         if IsClipFeatureReady(app, "labels"):
             label_result = EnsureClipFeature(app, "labels")
@@ -568,6 +592,7 @@ def DrawAppUI(app, frame_state, bvh_path):
                 LoadCurrentAnnotations,
                 ExportCurrentLabels,
                 switch_clip_index,
+                switch_mirror_variant,
             ):
                 return
         else:
@@ -580,7 +605,7 @@ def DrawAppUI(app, frame_state, bvh_path):
         GuiLabel(Rectangle(30, 220, 220, 20), ("Clip: %s" % frame_state.clip_name).encode("utf-8"))
         GuiLabel(Rectangle(260, 220, 100, 20), b"FPS: %d" % GetFPS())
         GuiLabel(Rectangle(30, 242, 150, 20), b"Labels: off")
-        if _draw_clip_dropdown(app, 30, 245, 330, switch_clip_index, open_up=True):
+        if _draw_clip_variant_row(app, 30, 245, 330, switch_clip_index, switch_mirror_variant, open_up=True):
             return
 
     DrawRenderingOptionsPanel(

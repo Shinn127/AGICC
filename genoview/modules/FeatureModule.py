@@ -302,12 +302,16 @@ def PrepareFeatureLoad(feature_id, motion, ground_height):
     return FeatureLoadResult(
         feature_id=feature_id,
         clip_resource=staging_motion.clip_resource,
+        motion_variant=staging_motion.motion_variant,
         motion=staging_motion,
     )
 
 
 def CommitFeatureLoadResult(app, result):
-    if result.clip_resource != app.motion.clip_resource:
+    if (
+        result.clip_resource != app.motion.clip_resource or
+        result.motion_variant != app.motion.motion_variant
+    ):
         return
 
     source = result.motion

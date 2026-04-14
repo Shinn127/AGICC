@@ -47,7 +47,7 @@ BVH_ROOT = PROJECT_ROOT.parent / "bvh"
 
 # 手工指定启动 BVH 的入口。优先使用相对 ../bvh/ 的路径，例如：
 # "lafan1/jumps1_subject1.bvh"
-STARTUP_BVH_CLIP = "lafan1/jumps1_subject1.bvh"
+STARTUP_BVH_CLIP = "lafan1/walk1_subject5.bvh"
 BVH_CLIP_DIR = "lafan1"
 
 
@@ -96,6 +96,8 @@ def _create_app_state(screen_width, screen_height):
         feature_load_executor=ThreadPoolExecutor(max_workers=2),
         pending_feature_loads={},
         camera=Camera(),
+        mirror_enabled=motion.mirrored,
+        mirror_axis=motion.mirror_axis,
     )
     SyncFeatureMounts(app, RequestFeatureLoad)
     SetAnnotationStatusFromLoad(debug, motion.label_result)
@@ -111,6 +113,8 @@ def _commit_clip_switch(app, clip_index, motion):
 
     app.clip_index = int(clip_index) % len(app.clip_resources)
     app.motion = motion
+    app.mirror_enabled = motion.mirrored
+    app.mirror_axis = motion.mirror_axis
     SyncFeatureMounts(app, RequestFeatureLoad)
     app.debug.playback = PlaybackController(app.motion.bvh_animation.frame_count, app.motion.bvh_frame_time)
     SetAnnotationStatusFromLoad(app.debug, app.motion.label_result)
