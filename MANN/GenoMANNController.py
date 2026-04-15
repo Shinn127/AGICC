@@ -110,6 +110,10 @@ class ViewerConfig:
     screen_width: int = DEFAULT_SCREEN_WIDTH
     screen_height: int = DEFAULT_SCREEN_HEIGHT
     gamepad_id: int = DEFAULT_GAMEPAD_ID
+    checkpoint_path: Path = DEFAULT_CHECKPOINT_PATH
+    stats_path: Path = DEFAULT_STATS_PATH
+    database_path: Path = DEFAULT_DATABASE_PATH
+    device: str | torch.device = "cpu"
 
 
 @dataclass
@@ -236,6 +240,15 @@ class FeatureBuilder:
         return np.linalg.norm(local_velocities_xz, axis=-1).astype(np.float32)
 
     @staticmethod
+    def flatten_gating_feature(local_pose, joint_indices):
+        return np.concatenate(
+            [
+                local_pose["local_positions"][joint_indices].reshape(-1),
+                local_pose["local_velocities"][joint_indices].reshape(-1),
+            ]
+        ).astype(np.float32)
+
+    @staticmethod
     def build_action_horizon(action_one_hot, sample_count):
         tiled = np.repeat(action_one_hot[np.newaxis, :], sample_count, axis=0)
         return tiled.reshape(-1).astype(np.float32)
@@ -282,7 +295,7 @@ class FeatureBuilder:
         ).astype(np.float32)
         x_gate = np.concatenate(
             [
-                previous_local_pose["local_velocities"][self.gating_joint_indices].reshape(-1).astype(np.float32),
+                self.flatten_gating_feature(previous_local_pose, self.gating_joint_indices),
                 runtime_state.action_one_hot.astype(np.float32),
                 np.asarray([speed_horizon[runtime_state.current_sample_index]], dtype=np.float32),
             ]
@@ -756,7 +769,7 @@ def _read_gamepad_input(app) -> RawInputState:
         look_active=bool(np.linalg.norm(right_stick) > 1e-3),
         run_pressed=bool(right_trigger > 0.5 or IsGamepadButtonDown(gamepad_id, GAMEPAD_BUTTON_RIGHT_TRIGGER_2)),
         desired_strafe=bool(left_trigger > 0.5 or IsGamepadButtonDown(gamepad_id, GAMEPAD_BUTTON_LEFT_TRIGGER_2)),
-        jump_pressed=bool(IsGamepadButtonPressed(gamepad_id, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)),
+        jump_pressed=bool(IsGamepadButtonDown(gamepad_id, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)),
         reset_pressed=bool(IsGamepadButtonPressed(gamepad_id, GAMEPAD_BUTTON_MIDDLE_RIGHT) or IsKeyPressed(KEY_R)),
     )
 
@@ -799,8 +812,51 @@ def _read_keyboard_input(app) -> RawInputState:
         look_active=look_active,
         run_pressed=bool(IsKeyDown(KEY_LEFT_SHIFT) or IsKeyDown(KEY_RIGHT_SHIFT)),
         desired_strafe=bool(IsKeyDown(KEY_LEFT_CONTROL) or IsKeyDown(KEY_RIGHT_CONTROL)),
-        jump_pressed=bool(IsKeyPressed(KEY_SPACE)),
+        jump_pressed=bool(IsKeyDown(KEY_SPACE)),
         reset_pressed=bool(IsKeyPressed(KEY_R)),
+    )
+
+
+def _has_vector_input(vector: np.ndarray, threshold: float = 1e-3) -> bool:
+    return bool(np.linalg.norm(vector) > threshold)
+
+
+def _has_keyboard_input(input_state: RawInputState) -> bool:
+    return (
+        _has_vector_input(input_state.move_2d)
+        or bool(input_state.look_active)
+        or bool(input_state.run_pressed)
+        or bool(input_state.desired_strafe)
+        or bool(input_state.jump_pressed)
+        or bool(input_state.reset_pressed)
+    )
+
+
+def _read_control_input(app) -> RawInputState:
+    gamepad_input = _read_gamepad_input(app)
+    keyboard_input = _read_keyboard_input(app)
+    if gamepad_input.input_source == "gamepad:none":
+        return keyboard_input
+    if not _has_keyboard_input(keyboard_input):
+        return gamepad_input
+
+    return RawInputState(
+        input_source=f"{gamepad_input.input_source}+keyboard",
+        move_2d=(
+            keyboard_input.move_2d
+            if _has_vector_input(keyboard_input.move_2d) else
+            gamepad_input.move_2d
+        ),
+        look_2d=(
+            keyboard_input.look_2d
+            if keyboard_input.look_active else
+            gamepad_input.look_2d
+        ),
+        look_active=bool(keyboard_input.look_active or gamepad_input.look_active),
+        run_pressed=bool(keyboard_input.run_pressed or gamepad_input.run_pressed),
+        desired_strafe=bool(keyboard_input.desired_strafe or gamepad_input.desired_strafe),
+        jump_pressed=bool(keyboard_input.jump_pressed or gamepad_input.jump_pressed),
+        reset_pressed=bool(keyboard_input.reset_pressed or gamepad_input.reset_pressed),
     )
 
 
@@ -834,12 +890,15 @@ def _derive_control_intent(input_state: RawInputState, camera: Camera, root_rota
         desired_facing_world = _normalize_xz(current_forward)
 
     desired_rotation = _yaw_rotation_from_direction(desired_facing_world, fallback_rotation=root_rotation)
+    is_moving = move_magnitude > 1e-3
     if input_state.jump_pressed and "jump" in HUMANOID_LOCOMOTION_ACTION_LABELS:
         action_label = "jump"
-    elif input_state.run_pressed and "run" in HUMANOID_LOCOMOTION_ACTION_LABELS:
+    elif is_moving and input_state.run_pressed and "run" in HUMANOID_LOCOMOTION_ACTION_LABELS:
         action_label = "run"
-    else:
+    elif is_moving and "walk" in HUMANOID_LOCOMOTION_ACTION_LABELS:
         action_label = "walk"
+    else:
+        action_label = "idle"
 
     return ControlIntent(
         desired_velocity_world=desired_velocity_world,
@@ -944,8 +1003,8 @@ def _make_runtime_state(
             if isinstance(value, np.ndarray) else value
             for key, value in initial_local_pose.items()
         },
-        action_label="walk",
-        action_one_hot=_make_action_one_hot("walk"),
+        action_label="idle",
+        action_one_hot=_make_action_one_hot("idle"),
         desired_strafe=False,
         trajectory_positions_world=np.repeat(initial_root_position[np.newaxis, :], sample_count, axis=0).astype(np.float32),
         trajectory_directions_world=np.repeat(
@@ -1217,7 +1276,12 @@ def _create_viewer_state(config: ViewerConfig):
     scene = _load_mann_scene_resources()
     motion = _load_static_motion_resources(scene, config.clip_path, config.initial_frame)
     feature_builder = FeatureBuilder(motion.joint_names, motion.bvh_animation.parents)
-    runtime = MANNRuntime()
+    runtime = MANNRuntime(
+        checkpoint_path=config.checkpoint_path,
+        stats_path=config.stats_path,
+        database_path=config.database_path,
+        device=config.device,
+    )
     camera = Camera()
     input_state = RawInputState()
     runtime_state = _make_runtime_state(
@@ -1263,7 +1327,7 @@ def _create_viewer_state(config: ViewerConfig):
 
 def _update_static_tracking(app):
     dt = max(1e-6, float(GetFrameTime()))
-    app.input_state = _read_gamepad_input(app)
+    app.input_state = _read_control_input(app)
     if app.input_state.reset_pressed:
         app.runtime_state = _make_runtime_state(
             app.motion.initial_local_pose,
@@ -1659,6 +1723,10 @@ def _run_static_viewer(args) -> None:
         screen_width=args.screen_width,
         screen_height=args.screen_height,
         gamepad_id=args.gamepad_id,
+        checkpoint_path=args.checkpoint,
+        stats_path=args.stats,
+        database_path=args.database,
+        device=args.device,
     )
 
     SetConfigFlags(FLAG_VSYNC_HINT)

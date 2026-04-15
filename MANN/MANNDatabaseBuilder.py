@@ -52,7 +52,7 @@ DEFAULT_LOCOMOTION_CLIP_SPECS = (
     ("walk1_subject5", None, None, None),
     ("run1_subject5", None, None, None),
     ("jumps1_subject1", None, None, None),
-    ("pushandstumble1_subject5", "idle", 260, 700),
+    ("pushAndStumble1_subject5", "idle", 260, 700),
 )
 DEFAULT_LOCOMOTION_CLIP_STEMS = tuple(
     clip_spec if isinstance(clip_spec, str) else clip_spec[0]
@@ -89,10 +89,13 @@ def _run_parallel_jobs(job_fn, job_specs, num_workers, show_progress, progress_d
     try:
         executor_cls = ProcessPoolExecutor
         with executor_cls(max_workers=num_workers) as executor:
-            futures = [executor.submit(job_fn, *job_spec) for job_spec in job_specs]
-            results = []
+            futures = {
+                executor.submit(job_fn, *job_spec): index
+                for index, job_spec in enumerate(job_specs)
+            }
+            results = [None] * len(job_specs)
             for future in as_completed(futures):
-                results.append(future.result())
+                results[futures[future]] = future.result()
                 if progress_bar is not None:
                     progress_bar.update(1)
     except (PermissionError, OSError):
@@ -100,10 +103,13 @@ def _run_parallel_jobs(job_fn, job_specs, num_workers, show_progress, progress_d
             progress_bar.close()
         progress_bar = tqdm(total=len(job_specs), desc=f"{progress_desc} [threads]", leave=True) if show_progress else None
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(job_fn, *job_spec) for job_spec in job_specs]
-            results = []
+            futures = {
+                executor.submit(job_fn, *job_spec): index
+                for index, job_spec in enumerate(job_specs)
+            }
+            results = [None] * len(job_specs)
             for future in as_completed(futures):
-                results.append(future.result())
+                results[futures[future]] = future.result()
                 if progress_bar is not None:
                     progress_bar.update(1)
 
@@ -122,11 +128,21 @@ def _resolve_joint_indices(joint_names, selected_joint_names):
 
 
 def resolve_locomotion_action_label(clip_path):
-    clip_name = Path(clip_path).stem
+    clip_name = Path(clip_path).stem.lower()
     for prefix, action_label in HUMANOID_LOCOMOTION_ACTION_PREFIX_TO_LABEL:
-        if clip_name.startswith(prefix):
+        if clip_name.startswith(str(prefix).lower()):
             return action_label
     return None
+
+
+def _label_key_from_clip_path(clip_path):
+    clip_path = Path(clip_path)
+    parts = [str(part) for part in clip_path.parts]
+    lower_parts = [part.lower() for part in parts]
+    if "bvh" in lower_parts:
+        bvh_index = lower_parts.index("bvh")
+        return Path(*parts[bvh_index:]).as_posix()
+    return clip_path.stem
 
 
 def _normalize_locomotion_clip_spec(clip_spec):
@@ -211,7 +227,7 @@ def _project_label_module_action_weights(label_result, min_action_weight=DEFAULT
 
 
 def build_label_action_weights(
-    clip_name,
+    clip_name_or_path,
     animation,
     dt,
     action_label_fallback,
@@ -243,7 +259,7 @@ def build_label_action_weights(
         bootstrap=True,
     )
     label_result = BuildAutoFrameLabels(
-        clip_name,
+        clip_name_or_path,
         animation.global_positions,
         label_pose_source,
         label_root_trajectory_source,
@@ -251,7 +267,7 @@ def build_label_action_weights(
         terrainProvider=None,
         jointNames=joint_names,
     )
-    LoadLabelAnnotations(label_result, clip_name)
+    LoadLabelAnnotations(label_result, clip_name_or_path)
     return _project_label_module_action_weights(
         label_result,
         min_action_weight=min_action_weight,
@@ -288,6 +304,15 @@ def flatten_future_traj_feature(
             root_local_trajectory["local_positions"][future_sample_indices][:, [0, 2]].reshape(-1),
             root_local_trajectory["local_directions"][future_sample_indices][:, [0, 2]].reshape(-1),
             root_local_trajectory["local_velocities"][future_sample_indices][:, [0, 2]].reshape(-1),
+        ]
+    ).astype(np.float32)
+
+
+def flatten_gating_feature(local_pose, joint_indices):
+    return np.concatenate(
+        [
+            local_pose["local_positions"][joint_indices].reshape(-1),
+            local_pose["local_velocities"][joint_indices].reshape(-1),
         ]
     ).astype(np.float32)
 
@@ -451,7 +476,7 @@ def _build_motion_sample_database(
         x_gate_rows.append(
             np.concatenate(
                 [
-                    previous_local_pose["local_velocities"][gating_joint_indices].reshape(-1).astype(np.float32),
+                    flatten_gating_feature(previous_local_pose, gating_joint_indices),
                     current_action_weights,
                     np.asarray([speed_horizon[HUMANOID_LOCOMOTION_TRAJECTORY_CURRENT_SAMPLE_INDEX]], dtype=np.float32),
                 ]
@@ -523,8 +548,9 @@ def _build_clip_database(
 ):
     animation = BVHImporter.load(str(clip_path), scale=scale)
     clip_name = Path(clip_path).stem
+    label_key = _label_key_from_clip_path(clip_path)
     action_weights, valid_action_mask = build_label_action_weights(
-        clip_name,
+        label_key,
         animation,
         dt,
         action_label,
@@ -830,7 +856,9 @@ def build_database_metadata(stage):
     x_main_traj_dim = sample_count * (2 + 2 + 2)
     x_main_speed_dim = sample_count
     x_main_action_dim = sample_count * action_dim
-    x_gate_vel_dim = len(HUMANOID_LOCOMOTION_GATING_JOINTS) * 3
+    # Historical metadata name kept for loader compatibility; this block now
+    # stores gating joint local positions followed by local velocities.
+    x_gate_vel_dim = len(HUMANOID_LOCOMOTION_GATING_JOINTS) * (3 + 3)
     x_gate_action_dim = action_dim
     x_gate_speed_dim = 1
     y_pose_dim = prediction_joint_count * (3 + 6 + 3)

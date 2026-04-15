@@ -6,10 +6,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-DEFAULT_MANN_HIDDEN_DIM = 512
-DEFAULT_GATING_HIDDEN_DIM = 32
+DEFAULT_MANN_HIDDEN_DIM = 1024
+DEFAULT_GATING_HIDDEN_DIM = 64
 DEFAULT_NUM_EXPERTS = 8
-DEFAULT_MANN_DROPOUT = 0.2
+DEFAULT_MANN_DROPOUT = 0.3
 
 
 @dataclass(frozen=True)
@@ -80,11 +80,12 @@ class ExpertLinear(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        for expert_index in range(self.num_experts):
-            nn.init.kaiming_uniform_(self.weight[expert_index], a=5 ** 0.5)
-        fan_in = self.in_features
-        bound = 1.0 / fan_in**0.5 if fan_in > 0 else 0.0
-        nn.init.uniform_(self.bias, -bound, bound)
+        if self.in_features > 0 and self.out_features > 0:
+            bound = (6.0 / (self.in_features * self.out_features)) ** 0.5
+        else:
+            bound = 0.0
+        nn.init.uniform_(self.weight, -bound, bound)
+        nn.init.zeros_(self.bias)
 
     def forward(self, x, expert_weights):
         blended_weight = torch.einsum("bk,koi->boi", expert_weights, self.weight)

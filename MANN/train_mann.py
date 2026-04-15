@@ -47,7 +47,7 @@ def move_batch_to_device(batch, device):
     }
 
 
-def run_epoch(model, dataloader, optimizer, device, training):
+def run_epoch(model, dataloader, optimizer, device, training, scheduler=None, epoch_index=0):
     if training:
         model.train()
     else:
@@ -57,7 +57,8 @@ def run_epoch(model, dataloader, optimizer, device, training):
     total_samples = 0
     progress = tqdm(dataloader, desc="train" if training else "val", leave=False)
 
-    for batch in progress:
+    batch_count = max(1, len(dataloader))
+    for batch_index, batch in enumerate(progress):
         batch = move_batch_to_device(batch, device)
 
         with torch.set_grad_enabled(training):
@@ -68,6 +69,8 @@ def run_epoch(model, dataloader, optimizer, device, training):
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 optimizer.step()
+                if scheduler is not None:
+                    scheduler.step(float(epoch_index) + float(batch_index + 1) / float(batch_count))
 
         batch_size = batch["x_main"].shape[0]
         total_loss += float(loss.detach()) * batch_size
@@ -108,21 +111,24 @@ def build_arg_parser():
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Directory for checkpoints and logs.")
     parser.add_argument("--split-path", type=Path, default=None, help="Optional JSON path for clip-level train/val/test splits.")
     parser.add_argument("--stats-path", type=Path, default=None, help="Optional NPZ path for normalization statistics.")
-    parser.add_argument("--epochs", type=int, default=20, help="Number of training epochs.")
-    parser.add_argument("--batch-size", type=int, default=256, help="Training batch size.")
+    parser.add_argument("--epochs", type=int, default=150, help="Number of training epochs.")
+    parser.add_argument("--batch-size", type=int, default=32, help="Training batch size.")
     parser.add_argument("--lr", type=float, default=1e-4, help="Adam learning rate.")
-    parser.add_argument("--weight-decay", type=float, default=0.0, help="AdamW weight decay.")
+    parser.add_argument("--weight-decay", type=float, default=1e-4, help="AdamW weight decay.")
     parser.add_argument("--num-experts", type=int, default=8, help="Number of MANN experts.")
-    parser.add_argument("--hidden-dim", type=int, default=512, help="Hidden dimension of the expert MLP.")
-    parser.add_argument("--gating-hidden-dim", type=int, default=32, help="Hidden dimension of the gating network.")
+    parser.add_argument("--hidden-dim", type=int, default=1024, help="Hidden dimension of the expert MLP.")
+    parser.add_argument("--gating-hidden-dim", type=int, default=64, help="Hidden dimension of the gating network.")
     parser.add_argument("--dropout", type=float, default=0.3, help="Dropout probability used in gating and expert MLP layers.")
+    parser.add_argument("--restart-period", type=int, default=10, help="Cosine restart period in epochs.")
+    parser.add_argument("--restart-mult", type=int, default=2, help="Cosine restart period multiplier.")
     parser.add_argument("--loader-workers", type=int, default=0, help="PyTorch DataLoader worker count.")
-    parser.add_argument("--train-ratio", type=float, default=0.8, help="Train split ratio when split file is not provided.")
-    parser.add_argument("--val-ratio", type=float, default=0.1, help="Validation split ratio when split file is not provided.")
+    parser.add_argument("--train-ratio", type=float, default=0.8, help="Train sample ratio when split file is generated or refreshed.")
+    parser.add_argument("--val-ratio", type=float, default=0.1, help="Validation sample ratio when split file is generated or refreshed.")
     parser.add_argument("--seed", type=int, default=1234, help="Random seed.")
     parser.add_argument("--device", type=str, default=None, help="Optional device override, e.g. cpu, cuda, mps.")
     parser.add_argument("--no-normalize", action="store_true", help="Disable dataset normalization.")
     parser.add_argument("--no-pin-memory", action="store_true", help="Disable DataLoader pin_memory.")
+    parser.add_argument("--no-scheduler", action="store_true", help="Disable cosine warm-restart learning-rate scheduling.")
     return parser
 
 
@@ -170,13 +176,26 @@ def main():
         lr=args.lr,
         weight_decay=args.weight_decay,
     )
+    scheduler = None if args.no_scheduler else torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0=max(1, int(args.restart_period)),
+        T_mult=max(1, int(args.restart_mult)),
+    )
 
     best_val_loss = float("inf")
     history = []
 
     for epoch in range(1, args.epochs + 1):
         print(f"Epoch {epoch}/{args.epochs}")
-        train_loss = run_epoch(model, dataloaders["train"], optimizer, device, training=True)
+        train_loss = run_epoch(
+            model,
+            dataloaders["train"],
+            optimizer,
+            device,
+            training=True,
+            scheduler=scheduler,
+            epoch_index=epoch - 1,
+        )
         val_loader = dataloaders["val"]
         val_loss = run_epoch(model, val_loader, optimizer, device, training=False) if len(val_loader.dataset) > 0 else train_loss
 
