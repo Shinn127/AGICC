@@ -14,11 +14,7 @@ if str(REPO_ROOT) not in sys.path:
 import numpy as np
 import torch
 
-try:
-    from tqdm.auto import tqdm
-except ImportError:
-    def tqdm(iterable=None, *args, **kwargs):
-        return iterable
+from tqdm.auto import tqdm
 
 from MANN.MANNDataset import build_mann_dataloaders
 from MANN.MANNModel import MANN, mann_mse_loss
@@ -109,7 +105,6 @@ def build_arg_parser():
     parser = argparse.ArgumentParser(description="Train a PyTorch MANN model from exported MANN databases.")
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET_PATH, help="Path to the exported MANN database (.npz).")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Directory for checkpoints and logs.")
-    parser.add_argument("--split-path", type=Path, default=None, help="Optional JSON path for clip-level train/val/test splits.")
     parser.add_argument("--stats-path", type=Path, default=None, help="Optional NPZ path for normalization statistics.")
     parser.add_argument("--epochs", type=int, default=150, help="Number of training epochs.")
     parser.add_argument("--batch-size", type=int, default=32, help="Training batch size.")
@@ -122,11 +117,10 @@ def build_arg_parser():
     parser.add_argument("--restart-period", type=int, default=10, help="Cosine restart period in epochs.")
     parser.add_argument("--restart-mult", type=int, default=2, help="Cosine restart period multiplier.")
     parser.add_argument("--loader-workers", type=int, default=0, help="PyTorch DataLoader worker count.")
-    parser.add_argument("--train-ratio", type=float, default=0.8, help="Train sample ratio when split file is generated or refreshed.")
-    parser.add_argument("--val-ratio", type=float, default=0.1, help="Validation sample ratio when split file is generated or refreshed.")
+    parser.add_argument("--train-ratio", type=float, default=0.8, help="Train sample ratio.")
+    parser.add_argument("--val-ratio", type=float, default=0.1, help="Validation sample ratio.")
     parser.add_argument("--seed", type=int, default=1234, help="Random seed.")
     parser.add_argument("--device", type=str, default=None, help="Optional device override, e.g. cpu, cuda, mps.")
-    parser.add_argument("--no-normalize", action="store_true", help="Disable dataset normalization.")
     parser.add_argument("--no-pin-memory", action="store_true", help="Disable DataLoader pin_memory.")
     parser.add_argument("--no-scheduler", action="store_true", help="Disable cosine warm-restart learning-rate scheduling.")
     return parser
@@ -148,16 +142,13 @@ def main():
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     stats_path = args.stats_path or output_dir / "stats.npz"
-    split_path = args.split_path or output_dir / "splits.json"
 
     dataloaders = build_mann_dataloaders(
         dataset_path=args.dataset,
         batch_size=args.batch_size,
-        split_path=split_path,
         train_ratio=args.train_ratio,
         val_ratio=args.val_ratio,
         seed=args.seed,
-        normalize=not args.no_normalize,
         stats_path=stats_path,
         num_workers=args.loader_workers,
         pin_memory=not args.no_pin_memory,

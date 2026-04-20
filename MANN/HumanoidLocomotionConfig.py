@@ -90,14 +90,6 @@ HUMANOID_LOCOMOTION_ACTION_LABELS = (
     "jump",
 )
 
-# LaFAN1 clip-name prefixes used in the stage-1 locomotion dataset.
-HUMANOID_LOCOMOTION_ACTION_PREFIX_TO_LABEL = (
-    ("walk", "walk"),
-    ("run", "run"),
-    ("sprint", "run"),
-    ("jumps", "jump"),
-)
-
 # These joints are usually not worth feeding into a locomotion controller.
 HUMANOID_LOCOMOTION_EXCLUDED_JOINTS = (
     "HeadEnd",

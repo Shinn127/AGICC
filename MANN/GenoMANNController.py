@@ -88,18 +88,11 @@ def resource_path(*parts, as_bytes=False):
 
 
 @dataclass(frozen=True)
-class RuntimePaths:
-    checkpoint_path: Path = DEFAULT_CHECKPOINT_PATH
-    stats_path: Path = DEFAULT_STATS_PATH
-    database_path: Path = DEFAULT_DATABASE_PATH
-
-
-@dataclass(frozen=True)
 class RuntimePrediction:
     y: np.ndarray
     y_pose: np.ndarray
     y_root: np.ndarray
-    y_future: np.ndarray | None
+    y_future: np.ndarray
     expert_weights: np.ndarray | None = None
 
 
@@ -180,7 +173,7 @@ class RuntimeDebugPrediction:
     y: np.ndarray
     y_pose: np.ndarray
     y_root: np.ndarray
-    y_future: np.ndarray | None
+    y_future: np.ndarray
     predicted_local_pose: dict
     predicted_local_positions_offset: np.ndarray
 
@@ -414,9 +407,6 @@ def _apply_future_trajectory_correction(
     debug_prediction: RuntimeDebugPrediction,
     blend: float = DEFAULT_Y_FUTURE_BLEND,
 ) -> None:
-    if debug_prediction.y_future is None:
-        return
-
     future_indices = np.asarray(HUMANOID_LOCOMOTION_TRAJECTORY_FUTURE_SAMPLE_INDICES, dtype=np.int32)
     future_feature = np.asarray(debug_prediction.y_future, dtype=np.float32).reshape(-1)
     future_count = len(future_indices)
@@ -534,16 +524,14 @@ class MANNRuntime:
         database_path: Path = DEFAULT_DATABASE_PATH,
         device: str | torch.device | None = None,
     ) -> None:
-        self.paths = RuntimePaths(
-            checkpoint_path=Path(checkpoint_path),
-            stats_path=Path(stats_path),
-            database_path=Path(database_path),
-        )
+        self.checkpoint_path = Path(checkpoint_path)
+        self.stats_path = Path(stats_path)
+        self.database_path = Path(database_path)
         self.device = torch.device(device or "cpu")
-        self.spec = self._load_spec(self.paths.database_path)
-        self.stats = MANNFeatureStats.load(self.paths.stats_path)
+        self.spec = self._load_spec(self.database_path)
+        self.stats = MANNFeatureStats.load(self.stats_path)
         self.model, self.model_config, self.checkpoint = self._load_model(
-            self.paths.checkpoint_path,
+            self.checkpoint_path,
             self.device,
         )
         self._validate_loaded_artifacts()
@@ -670,15 +658,13 @@ class MANNRuntime:
 
         y_pose = split_outputs["y_pose"].detach().cpu().numpy().astype(np.float32)
         y_root = split_outputs["y_root"].detach().cpu().numpy().astype(np.float32)
-        y_future_tensor = split_outputs.get("y_future")
-        y_future = None if y_future_tensor is None else y_future_tensor.detach().cpu().numpy().astype(np.float32)
+        y_future = split_outputs["y_future"].detach().cpu().numpy().astype(np.float32)
 
         if squeeze_output:
             y_pred = y_pred[0]
             y_pose = y_pose[0]
             y_root = y_root[0]
-            if y_future is not None:
-                y_future = y_future[0]
+            y_future = y_future[0]
             if expert_weights is not None:
                 expert_weights = expert_weights[0]
 
@@ -1145,54 +1131,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stats", type=Path, default=DEFAULT_STATS_PATH, help="Path to the saved normalization stats.")
     parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE_PATH, help="Path to the exported MANN database.")
     parser.add_argument("--device", type=str, default="cpu", help="Torch device used for inference.")
-    parser.add_argument("--self-test", action="store_true", help="Run the runtime loading self-test instead of opening the static viewer.")
-    parser.add_argument(
-        "--sample-index",
-        type=int,
-        default=0,
-        help="Database sample index used by the runtime self-test.",
-    )
     parser.add_argument("--clip", type=Path, default=DEFAULT_VIEWER_CLIP, help="BVH clip relative to resources used by the static viewer.")
     parser.add_argument("--frame", type=int, default=DEFAULT_INITIAL_FRAME, help="Frame index used as the initial static pose.")
     parser.add_argument("--screen-width", type=int, default=DEFAULT_SCREEN_WIDTH, help="Viewer window width.")
     parser.add_argument("--screen-height", type=int, default=DEFAULT_SCREEN_HEIGHT, help="Viewer window height.")
     parser.add_argument("--gamepad-id", type=int, default=DEFAULT_GAMEPAD_ID, help="Gamepad id used by the viewer controls.")
     return parser
-
-
-def _run_runtime_self_test(args) -> None:
-    runtime = MANNRuntime(
-        checkpoint_path=args.checkpoint,
-        stats_path=args.stats,
-        database_path=args.database,
-        device=args.device,
-    )
-
-    with np.load(args.database, allow_pickle=False) as data:
-        sample_index = int(np.clip(args.sample_index, 0, len(data["x_main"]) - 1))
-        x_main = data["x_main"][sample_index].astype(np.float32)
-        x_gate = data["x_gate"][sample_index].astype(np.float32)
-
-    prediction = runtime.predict(x_main, x_gate, return_aux=True)
-
-    print("Loaded Geno MANN runtime")
-    print(f"  checkpoint: {args.checkpoint}")
-    print(f"  stats:      {args.stats}")
-    print(f"  database:   {args.database}")
-    print(f"  device:     {runtime.device}")
-    print(f"  stage:      {runtime.spec.stage}")
-    print(f"  x_main_dim: {runtime.spec.x_main_dim}")
-    print(f"  x_gate_dim: {runtime.spec.x_gate_dim}")
-    print(f"  y_dim:      {runtime.spec.y_dim}")
-    print(f"  actions:    {runtime.action_labels}")
-    print(f"  sample:     {sample_index}")
-    print(f"  y_pose:     {prediction.y_pose.shape}")
-    print(f"  y_root:     {prediction.y_root.shape}")
-    print(f"  y_future:   {None if prediction.y_future is None else prediction.y_future.shape}")
-    print(
-        "  experts:    "
-        f"{None if prediction.expert_weights is None else prediction.expert_weights.shape}"
-    )
 
 
 def _load_static_motion_resources(scene, clip_path: Path, initial_frame: int):
@@ -1759,11 +1703,7 @@ def _run_static_viewer(args) -> None:
 
 
 def main() -> None:
-    args = build_arg_parser().parse_args()
-    if args.self_test:
-        _run_runtime_self_test(args)
-    else:
-        _run_static_viewer(args)
+    _run_static_viewer(build_arg_parser().parse_args())
 
 
 if __name__ == "__main__":

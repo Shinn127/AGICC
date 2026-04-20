@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-import json
-from typing import Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -16,7 +15,7 @@ class MANNDataSpec:
     y_dim: int
     y_pose_slice: slice
     y_root_slice: slice
-    y_future_slice: Optional[slice]
+    y_future_slice: slice
     x_main_action_slice: slice
     x_gate_action_slice: slice
     action_labels: Tuple[str, ...]
@@ -34,6 +33,8 @@ class MANNDataSpec:
         y_pose_dim = int(data["y_pose_dim"].item())
         y_root_dim = int(data["y_root_dim"].item())
         y_future_dim = int(data["y_future_dim"].item())
+        if stage != "stage2" or y_future_dim <= 0:
+            raise ValueError("MANN datasets must be exported with the stage2 database builder.")
 
         x_main_dim = x_main_pose_dim + x_main_traj_dim + x_main_speed_dim + x_main_action_dim
         x_gate_dim = x_gate_vel_dim + x_gate_action_dim + x_gate_speed_dim
@@ -41,7 +42,7 @@ class MANNDataSpec:
 
         y_pose_slice = slice(0, y_pose_dim)
         y_root_slice = slice(y_pose_dim, y_pose_dim + y_root_dim)
-        y_future_slice = None if y_future_dim == 0 else slice(y_pose_dim + y_root_dim, y_dim)
+        y_future_slice = slice(y_pose_dim + y_root_dim, y_dim)
         x_main_action_slice = slice(x_main_pose_dim + x_main_traj_dim + x_main_speed_dim, x_main_dim)
         x_gate_action_slice = slice(x_gate_vel_dim, x_gate_vel_dim + x_gate_action_dim)
 
@@ -135,139 +136,29 @@ class MANNFeatureStats:
         )
 
 
-def build_clip_splits(clip_names, train_ratio=0.8, val_ratio=0.1, seed=1234):
-    clip_names = np.asarray([str(clip_name) for clip_name in clip_names])
-    if len(clip_names) == 0:
-        return {"split_type": "sample_indices", "train": [], "val": [], "test": []}
-
+def build_action_splits(action_ids, train_ratio=0.8, val_ratio=0.1, seed=1234):
+    action_ids = np.asarray(action_ids, dtype=np.int64)
     rng = np.random.default_rng(seed)
-    splits = {
-        "split_type": "sample_indices",
-        "train": [],
-        "val": [],
-        "test": [],
-    }
+    split_parts = {"train": [], "val": [], "test": []}
 
-    for clip_name in sorted(set(clip_names)):
-        clip_indices = np.flatnonzero(clip_names == clip_name).astype(np.int64)
-        rng.shuffle(clip_indices)
+    for action_id in np.unique(action_ids):
+        indices = np.flatnonzero(action_ids == action_id).astype(np.int64)
+        rng.shuffle(indices)
 
-        split_counts = _allocate_split_counts(
-            len(clip_indices),
-            train_ratio=train_ratio,
-            val_ratio=val_ratio,
-        )
-        train_count = split_counts["train"]
-        val_count = split_counts["val"]
+        train_count = int(round(len(indices) * float(train_ratio)))
+        val_count = int(round(len(indices) * float(val_ratio)))
+        train_count = min(max(train_count, 0), len(indices))
+        val_count = min(max(val_count, 0), len(indices) - train_count)
         test_start = train_count + val_count
 
-        splits["train"].extend(int(index) for index in clip_indices[:train_count])
-        splits["val"].extend(int(index) for index in clip_indices[train_count:test_start])
-        splits["test"].extend(int(index) for index in clip_indices[test_start:])
-
-    for split_name in ("train", "val", "test"):
-        splits[split_name] = sorted(splits[split_name])
-
-    return splits
-
-
-def _allocate_split_counts(total_count, train_ratio=0.8, val_ratio=0.1):
-    total_count = int(total_count)
-    if total_count <= 0:
-        return {"train": 0, "val": 0, "test": 0}
-
-    ratios = np.asarray(
-        [
-            max(0.0, float(train_ratio)),
-            max(0.0, float(val_ratio)),
-            max(0.0, 1.0 - float(train_ratio) - float(val_ratio)),
-        ],
-        dtype=np.float64,
-    )
-    if float(np.sum(ratios)) <= 0.0:
-        ratios[:] = (1.0, 0.0, 0.0)
-    ratios = ratios / np.sum(ratios)
-
-    ideal = ratios * total_count
-    counts = np.floor(ideal).astype(np.int64)
-    remainder = int(total_count - int(np.sum(counts)))
-    if remainder > 0:
-        fractional_order = np.argsort(-(ideal - counts))
-        for split_index in fractional_order[:remainder]:
-            counts[int(split_index)] += 1
-
-    positive_splits = ratios > 0.0
-    if total_count >= int(np.sum(positive_splits)):
-        min_counts = positive_splits.astype(np.int64)
-        for split_index in np.where(positive_splits & (counts == 0))[0]:
-            donor_candidates = np.where(counts > min_counts)[0]
-            if len(donor_candidates) == 0:
-                break
-            donor_index = int(donor_candidates[np.argmax(counts[donor_candidates])])
-            counts[donor_index] -= 1
-            counts[int(split_index)] += 1
-
-    while int(np.sum(counts)) > total_count:
-        donor_index = int(np.argmax(counts))
-        counts[donor_index] -= 1
-    while int(np.sum(counts)) < total_count:
-        receiver_index = int(np.argmax(ratios))
-        counts[receiver_index] += 1
+        split_parts["train"].append(indices[:train_count])
+        split_parts["val"].append(indices[train_count:test_start])
+        split_parts["test"].append(indices[test_start:])
 
     return {
-        "train": int(counts[0]),
-        "val": int(counts[1]),
-        "test": int(counts[2]),
+        split_name: np.sort(np.concatenate(parts)).astype(np.int64) if parts else np.zeros((0,), dtype=np.int64)
+        for split_name, parts in split_parts.items()
     }
-
-
-def _split_needs_rebuild(clip_names, splits, train_ratio=0.8, val_ratio=0.1, seed=1234):
-    if splits.get("split_type") != "sample_indices":
-        return True
-
-    sample_count = len(clip_names)
-    try:
-        split_sets = {
-            split_name: {int(index) for index in splits.get(split_name, [])}
-            for split_name in ("train", "val", "test")
-        }
-    except (TypeError, ValueError):
-        return True
-
-    valid_indices = set(range(sample_count))
-    assigned = set().union(*split_sets.values()) if split_sets else set()
-    if assigned != valid_indices:
-        return True
-    if any(split_sets[left] & split_sets[right] for left, right in (("train", "val"), ("train", "test"), ("val", "test"))):
-        return True
-
-    expected_splits = build_clip_splits(
-        clip_names,
-        train_ratio=train_ratio,
-        val_ratio=val_ratio,
-        seed=seed,
-    )
-    return any(len(split_sets[split_name]) != len(expected_splits[split_name]) for split_name in ("train", "val", "test"))
-
-
-def save_clip_splits(path, splits):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as file:
-        json.dump(splits, file, indent=2, sort_keys=True)
-
-
-def load_clip_splits(path):
-    with Path(path).open("r", encoding="utf-8") as file:
-        return json.load(file)
-
-
-def indices_from_split(clip_names, splits, split_name):
-    if splits.get("split_type") == "sample_indices":
-        return np.asarray(splits.get(split_name, []), dtype=np.int64)
-
-    allowed = set(splits.get(split_name, []))
-    return np.asarray([index for index, clip_name in enumerate(clip_names) if str(clip_name) in allowed], dtype=np.int64)
 
 
 class MANNDataset(Dataset):
@@ -288,16 +179,8 @@ class MANNDataset(Dataset):
         self.action_ids = self.data["action_ids"].astype(np.int64)
         self.clip_names = self.data["clip_names"]
         self.frame_indices = self.data["frame_indices"].astype(np.int64)
-        self.mirror_flags = (
-            self.data["mirror_flags"].astype(np.uint8)
-            if "mirror_flags" in self.data.files else
-            np.zeros((len(self.y),), dtype=np.uint8)
-        )
-        self.variant_names = (
-            self.data["variant_names"]
-            if "variant_names" in self.data.files else
-            self.clip_names
-        )
+        self.mirror_flags = self.data["mirror_flags"].astype(np.uint8)
+        self.variant_names = self.data["variant_names"]
 
         if indices is None:
             self.indices = np.arange(len(self.y), dtype=np.int64)
@@ -333,54 +216,36 @@ class MANNDataset(Dataset):
 
 def build_mann_datasets(
     dataset_path,
-    split_path=None,
     train_ratio=0.8,
     val_ratio=0.1,
     seed=1234,
-    normalize=True,
     stats_path=None,
 ):
     dataset_path = Path(dataset_path)
     root_dataset = MANNDataset(dataset_path, normalize=False)
-    clip_names = root_dataset.clip_names
+    splits = build_action_splits(root_dataset.action_ids, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed)
+    train_indices = splits["train"]
+    val_indices = splits["val"]
+    test_indices = splits["test"]
 
-    if split_path is not None and Path(split_path).exists():
-        splits = load_clip_splits(split_path)
-        if _split_needs_rebuild(clip_names, splits, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed):
-            splits = build_clip_splits(clip_names, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed)
-            save_clip_splits(split_path, splits)
-    else:
-        splits = build_clip_splits(clip_names, train_ratio=train_ratio, val_ratio=val_ratio, seed=seed)
-        if split_path is not None:
-            save_clip_splits(split_path, splits)
+    if len(train_indices) == 0:
+        raise ValueError("Train split is empty; cannot compute normalization statistics.")
 
-    train_indices = indices_from_split(clip_names, splits, "train")
-    val_indices = indices_from_split(clip_names, splits, "val")
-    test_indices = indices_from_split(clip_names, splits, "test")
-
-    if normalize:
-        if len(train_indices) == 0:
-            raise ValueError("Train split is empty; cannot compute normalization statistics.")
-        stats = MANNFeatureStats.from_arrays(
-            root_dataset.x_main[train_indices],
-            root_dataset.x_gate[train_indices],
-            root_dataset.y[train_indices],
-            root_dataset.spec,
-        )
-        if stats_path is not None:
-            stats.save(stats_path)
-    else:
-        stats = None
-        if stats_path is not None and Path(stats_path).exists():
-            stats = MANNFeatureStats.load(stats_path)
+    stats = MANNFeatureStats.from_arrays(
+        root_dataset.x_main[train_indices],
+        root_dataset.x_gate[train_indices],
+        root_dataset.y[train_indices],
+        root_dataset.spec,
+    )
+    if stats_path is not None:
+        stats.save(stats_path)
 
     datasets = {
-        "train": MANNDataset(dataset_path, indices=train_indices, normalize=normalize, stats=stats),
-        "val": MANNDataset(dataset_path, indices=val_indices, normalize=normalize, stats=stats),
-        "test": MANNDataset(dataset_path, indices=test_indices, normalize=normalize, stats=stats),
+        "train": MANNDataset(dataset_path, indices=train_indices, normalize=True, stats=stats),
+        "val": MANNDataset(dataset_path, indices=val_indices, normalize=True, stats=stats),
+        "test": MANNDataset(dataset_path, indices=test_indices, normalize=True, stats=stats),
         "spec": root_dataset.spec,
         "stats": stats,
-        "splits": splits,
     }
     return datasets
 
@@ -388,11 +253,9 @@ def build_mann_datasets(
 def build_mann_dataloaders(
     dataset_path,
     batch_size,
-    split_path=None,
     train_ratio=0.8,
     val_ratio=0.1,
     seed=1234,
-    normalize=True,
     stats_path=None,
     num_workers=0,
     pin_memory=True,
@@ -400,11 +263,9 @@ def build_mann_dataloaders(
 ):
     datasets = build_mann_datasets(
         dataset_path,
-        split_path=split_path,
         train_ratio=train_ratio,
         val_ratio=val_ratio,
         seed=seed,
-        normalize=normalize,
         stats_path=stats_path,
     )
 
@@ -432,6 +293,5 @@ def build_mann_dataloaders(
         ),
         "spec": datasets["spec"],
         "stats": datasets["stats"],
-        "splits": datasets["splits"],
     }
     return dataloaders

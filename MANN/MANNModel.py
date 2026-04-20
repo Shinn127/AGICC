@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -36,7 +35,7 @@ class MANNModelConfig:
     ):
         y_pose_dim = spec.y_pose_slice.stop - spec.y_pose_slice.start
         y_root_dim = spec.y_root_slice.stop - spec.y_root_slice.start
-        y_future_dim = 0 if spec.y_future_slice is None else (spec.y_future_slice.stop - spec.y_future_slice.start)
+        y_future_dim = spec.y_future_slice.stop - spec.y_future_slice.start
         return cls(
             x_main_dim=spec.x_main_dim,
             x_gate_dim=spec.x_gate_dim,
@@ -160,9 +159,8 @@ class MANN(nn.Module):
         outputs = {
             "y_pose": y_pred[..., :y_pose_end],
             "y_root": y_pred[..., y_pose_end:y_root_end],
+            "y_future": y_pred[..., y_root_end:y_root_end + self.config.y_future_dim],
         }
-        if self.config.y_future_dim > 0:
-            outputs["y_future"] = y_pred[..., y_root_end:y_root_end + self.config.y_future_dim]
         return outputs
 
 

@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import argparse
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import sys
 
 MANN_ROOT = Path(__file__).resolve().parent
@@ -14,11 +13,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import numpy as np
 
-try:
-    from tqdm.auto import tqdm
-except ImportError:
-    def tqdm(iterable=None, *args, **kwargs):
-        return iterable
+from tqdm.auto import tqdm
 
 from genoview.modules.BVHImporter import BVHImporter
 from genoview.modules.ContactModule import BuildContactData
@@ -30,7 +25,6 @@ from genoview.modules.LabelModule import (
 from genoview.modules.MotionMirror import DEFAULT_MIRROR_AXIS, MirrorBVHAnimation
 from MANN.HumanoidLocomotionConfig import (
     HUMANOID_LOCOMOTION_ACTION_LABELS,
-    HUMANOID_LOCOMOTION_ACTION_PREFIX_TO_LABEL,
     HUMANOID_LOCOMOTION_GATING_JOINTS,
     HUMANOID_LOCOMOTION_PREDICTION_JOINTS,
     HUMANOID_LOCOMOTION_TRAJECTORY_CURRENT_SAMPLE_INDEX,
@@ -49,14 +43,10 @@ from genoview.modules.RootModule import (
 DEFAULT_OUTPUT_DIR = Path("MANN/output/mann")
 DEFAULT_LAFAN1_DIR = Path("../bvh/lafan1")
 DEFAULT_LOCOMOTION_CLIP_SPECS = (
-    ("walk1_subject5", None, None, None),
-    ("run1_subject5", None, None, None),
-    ("jumps1_subject1", None, None, None),
-    ("pushAndStumble1_subject5", "idle", 260, 700),
-)
-DEFAULT_LOCOMOTION_CLIP_STEMS = tuple(
-    clip_spec if isinstance(clip_spec, str) else clip_spec[0]
-    for clip_spec in DEFAULT_LOCOMOTION_CLIP_SPECS
+    ("walk1_subject5", None, None),
+    ("run1_subject5", None, None),
+    ("jumps1_subject1", None, None),
+    ("pushAndStumble1_subject5", 260, 700),
 )
 DEFAULT_MIN_MANN_ACTION_WEIGHT = 1e-4
 
@@ -73,45 +63,19 @@ class MANNClipDatabase:
     variant_names: np.ndarray
 
 
-def _default_worker_count():
-    return max(1, os.cpu_count() or 1)
-
-
-def _resolve_worker_count(num_workers):
-    if num_workers is None or int(num_workers) <= 0:
-        return _default_worker_count()
-    return max(1, int(num_workers))
-
-
 def _run_parallel_jobs(job_fn, job_specs, num_workers, show_progress, progress_desc):
     progress_bar = tqdm(total=len(job_specs), desc=progress_desc, leave=True) if show_progress else None
 
-    try:
-        executor_cls = ProcessPoolExecutor
-        with executor_cls(max_workers=num_workers) as executor:
-            futures = {
-                executor.submit(job_fn, *job_spec): index
-                for index, job_spec in enumerate(job_specs)
-            }
-            results = [None] * len(job_specs)
-            for future in as_completed(futures):
-                results[futures[future]] = future.result()
-                if progress_bar is not None:
-                    progress_bar.update(1)
-    except (PermissionError, OSError):
-        if progress_bar is not None:
-            progress_bar.close()
-        progress_bar = tqdm(total=len(job_specs), desc=f"{progress_desc} [threads]", leave=True) if show_progress else None
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = {
-                executor.submit(job_fn, *job_spec): index
-                for index, job_spec in enumerate(job_specs)
-            }
-            results = [None] * len(job_specs)
-            for future in as_completed(futures):
-                results[futures[future]] = future.result()
-                if progress_bar is not None:
-                    progress_bar.update(1)
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = {
+            executor.submit(job_fn, *job_spec): index
+            for index, job_spec in enumerate(job_specs)
+        }
+        results = [None] * len(job_specs)
+        for future in as_completed(futures):
+            results[futures[future]] = future.result()
+            if progress_bar is not None:
+                progress_bar.update(1)
 
     if progress_bar is not None:
         progress_bar.close()
@@ -127,14 +91,6 @@ def _resolve_joint_indices(joint_names, selected_joint_names):
     return np.asarray([joint_name_to_index[joint_name] for joint_name in selected_joint_names], dtype=np.int32)
 
 
-def resolve_locomotion_action_label(clip_path):
-    clip_name = Path(clip_path).stem.lower()
-    for prefix, action_label in HUMANOID_LOCOMOTION_ACTION_PREFIX_TO_LABEL:
-        if clip_name.startswith(str(prefix).lower()):
-            return action_label
-    return None
-
-
 def _label_key_from_clip_path(clip_path):
     clip_path = Path(clip_path)
     parts = [str(part) for part in clip_path.parts]
@@ -147,16 +103,16 @@ def _label_key_from_clip_path(clip_path):
 
 def _normalize_locomotion_clip_spec(clip_spec):
     if isinstance(clip_spec, str):
-        return clip_spec, None, None, None
-    if len(clip_spec) != 4:
+        return clip_spec, None, None
+    if len(clip_spec) != 3:
         raise ValueError(
             "Locomotion clip specs must be either a clip stem string or "
-            "(clip_stem, action_label, frame_start, frame_end)."
+            "(clip_stem, frame_start, frame_end)."
         )
-    clip_stem, action_label, frame_start, frame_end = clip_spec
+    clip_stem, frame_start, frame_end = clip_spec
     if frame_start is not None and frame_end is not None and int(frame_end) < int(frame_start):
         raise ValueError(f"Invalid frame range for {clip_stem}: {frame_start}-{frame_end}.")
-    return str(clip_stem), action_label, frame_start, frame_end
+    return str(clip_stem), frame_start, frame_end
 
 
 def list_locomotion_clips(dataset_dir=DEFAULT_LAFAN1_DIR):
@@ -168,7 +124,7 @@ def list_locomotion_clips(dataset_dir=DEFAULT_LAFAN1_DIR):
     ]
     missing_clip_stems = [
         clip_stem
-        for clip_stem, _, _, _ in normalized_clip_specs
+        for clip_stem, _, _ in normalized_clip_specs
         if not (dataset_dir / f"{clip_stem}.bvh").exists()
     ]
     if missing_clip_stems:
@@ -177,28 +133,10 @@ def list_locomotion_clips(dataset_dir=DEFAULT_LAFAN1_DIR):
             f"{dataset_dir}: {missing_clip_stems}"
         )
 
-    for clip_stem, action_label_override, frame_start, frame_end in normalized_clip_specs:
+    for clip_stem, frame_start, frame_end in normalized_clip_specs:
         clip_path = dataset_dir / f"{clip_stem}.bvh"
-        action_label = action_label_override or resolve_locomotion_action_label(clip_path)
-        if action_label is None:
-            continue
-        clip_specs.append((clip_path, action_label, frame_start, frame_end))
+        clip_specs.append((clip_path, frame_start, frame_end))
     return clip_specs
-
-
-def make_action_one_hot(action_label):
-    action_index = HUMANOID_LOCOMOTION_ACTION_LABELS.index(action_label)
-    one_hot = np.zeros(len(HUMANOID_LOCOMOTION_ACTION_LABELS), dtype=np.float32)
-    one_hot[action_index] = 1.0
-    return one_hot, action_index
-
-
-def build_constant_action_weights(action_label, frame_count):
-    action_one_hot, _ = make_action_one_hot(action_label)
-    return np.repeat(action_one_hot[np.newaxis, :], int(frame_count), axis=0).astype(np.float32), np.ones(
-        (int(frame_count),),
-        dtype=bool,
-    )
 
 
 def _project_label_module_action_weights(label_result, min_action_weight=DEFAULT_MIN_MANN_ACTION_WEIGHT):
@@ -230,13 +168,8 @@ def build_label_action_weights(
     clip_name_or_path,
     animation,
     dt,
-    action_label_fallback,
-    use_label_actions=True,
     min_action_weight=DEFAULT_MIN_MANN_ACTION_WEIGHT,
 ):
-    if not use_label_actions:
-        return build_constant_action_weights(action_label_fallback, animation.frame_count)
-
     joint_names = animation.raw_data["names"]
     label_root_trajectory_source = BuildRootTrajectorySource(
         animation.global_positions,
@@ -338,16 +271,14 @@ def build_root_delta_target(local_pose):
     )
 
 
-def build_target_vector(local_pose, prediction_joint_indices, include_future=False, future_feature=None):
-    feature_parts = [
-        flatten_pose_feature(local_pose, prediction_joint_indices),
-        build_root_delta_target(local_pose),
-    ]
-    if include_future:
-        if future_feature is None:
-            raise ValueError("future_feature must be provided when include_future=True.")
-        feature_parts.append(np.asarray(future_feature, dtype=np.float32).reshape(-1))
-    return np.concatenate(feature_parts).astype(np.float32)
+def build_target_vector(local_pose, prediction_joint_indices, future_feature):
+    return np.concatenate(
+        [
+            flatten_pose_feature(local_pose, prediction_joint_indices),
+            build_root_delta_target(local_pose),
+            np.asarray(future_feature, dtype=np.float32).reshape(-1),
+        ]
+    ).astype(np.float32)
 
 
 def get_valid_frame_range(
@@ -387,14 +318,12 @@ def _build_motion_sample_database(
     valid_action_mask,
     frame_start,
     frame_end,
-    stage,
     dt=DEFAULT_BVH_FRAME_TIME,
     sample_offsets=HUMANOID_LOCOMOTION_TRAJECTORY_SAMPLE_OFFSETS,
     future_sample_indices=HUMANOID_LOCOMOTION_TRAJECTORY_FUTURE_SAMPLE_INDICES,
     mirrored=False,
     show_progress=False,
 ):
-    include_future = stage == "stage2"
     joint_names = animation.raw_data["names"]
     action_weights = np.asarray(action_weights, dtype=np.float32)
     valid_action_mask = np.asarray(valid_action_mask, dtype=bool)
@@ -420,7 +349,7 @@ def _build_motion_sample_database(
     first_valid_frame, last_valid_frame = get_valid_frame_range(
         animation.frame_count,
         sample_offsets,
-        require_next_frame=include_future,
+        require_next_frame=True,
         frame_start=frame_start,
         frame_end=frame_end,
     )
@@ -439,7 +368,7 @@ def _build_motion_sample_database(
 
     frame_iter = range(first_valid_frame, last_valid_frame + 1)
     if show_progress:
-        frame_iter = tqdm(frame_iter, desc=f"{stage} {variant_name}", leave=False)
+        frame_iter = tqdm(frame_iter, desc=variant_name, leave=False)
 
     for current_frame in frame_iter:
         previous_frame = current_frame - 1
@@ -483,23 +412,20 @@ def _build_motion_sample_database(
             ).astype(np.float32)
         )
 
-        future_feature = None
-        if include_future:
-            next_root_local_trajectory = BuildRootLocalTrajectory(
-                root_trajectory_source,
-                current_frame + 1,
-                sampleOffsets=sample_offsets,
-            )
-            future_feature = flatten_future_traj_feature(
-                next_root_local_trajectory,
-                future_sample_indices=future_sample_indices,
-            )
+        next_root_local_trajectory = BuildRootLocalTrajectory(
+            root_trajectory_source,
+            current_frame + 1,
+            sampleOffsets=sample_offsets,
+        )
+        future_feature = flatten_future_traj_feature(
+            next_root_local_trajectory,
+            future_sample_indices=future_sample_indices,
+        )
 
         y_rows.append(
             build_target_vector(
                 current_local_pose,
                 prediction_joint_indices,
-                include_future=include_future,
                 future_feature=future_feature,
             )
         )
@@ -530,17 +456,14 @@ def _build_motion_sample_database(
     )
 
 
-def _build_clip_database(
+def build_clip_database(
     clip_path,
-    action_label,
-    frame_start,
-    frame_end,
-    stage,
+    frame_start=None,
+    frame_end=None,
     scale=0.01,
     dt=DEFAULT_BVH_FRAME_TIME,
     sample_offsets=HUMANOID_LOCOMOTION_TRAJECTORY_SAMPLE_OFFSETS,
     future_sample_indices=HUMANOID_LOCOMOTION_TRAJECTORY_FUTURE_SAMPLE_INDICES,
-    use_label_actions=True,
     min_action_weight=DEFAULT_MIN_MANN_ACTION_WEIGHT,
     mirror=False,
     mirror_axis=DEFAULT_MIRROR_AXIS,
@@ -553,8 +476,6 @@ def _build_clip_database(
         label_key,
         animation,
         dt,
-        action_label,
-        use_label_actions=use_label_actions,
         min_action_weight=min_action_weight,
     )
 
@@ -567,7 +488,6 @@ def _build_clip_database(
             valid_action_mask,
             frame_start,
             frame_end,
-            stage,
             dt=dt,
             sample_offsets=sample_offsets,
             future_sample_indices=future_sample_indices,
@@ -587,7 +507,6 @@ def _build_clip_database(
                 valid_action_mask,
                 frame_start,
                 frame_end,
-                stage,
                 dt=dt,
                 sample_offsets=sample_offsets,
                 future_sample_indices=future_sample_indices,
@@ -597,70 +516,6 @@ def _build_clip_database(
         )
 
     return concatenate_clip_databases(databases)
-
-
-def build_stage1_clip_database(
-    clip_path,
-    action_label,
-    frame_start=None,
-    frame_end=None,
-    scale=0.01,
-    dt=DEFAULT_BVH_FRAME_TIME,
-    sample_offsets=HUMANOID_LOCOMOTION_TRAJECTORY_SAMPLE_OFFSETS,
-    use_label_actions=True,
-    min_action_weight=DEFAULT_MIN_MANN_ACTION_WEIGHT,
-    mirror=False,
-    mirror_axis=DEFAULT_MIRROR_AXIS,
-    show_progress=False,
-):
-    return _build_clip_database(
-        clip_path,
-        action_label,
-        frame_start,
-        frame_end,
-        "stage1",
-        scale=scale,
-        dt=dt,
-        sample_offsets=sample_offsets,
-        use_label_actions=use_label_actions,
-        min_action_weight=min_action_weight,
-        mirror=mirror,
-        mirror_axis=mirror_axis,
-        show_progress=show_progress,
-    )
-
-
-def build_stage2_clip_database(
-    clip_path,
-    action_label,
-    frame_start=None,
-    frame_end=None,
-    scale=0.01,
-    dt=DEFAULT_BVH_FRAME_TIME,
-    sample_offsets=HUMANOID_LOCOMOTION_TRAJECTORY_SAMPLE_OFFSETS,
-    future_sample_indices=HUMANOID_LOCOMOTION_TRAJECTORY_FUTURE_SAMPLE_INDICES,
-    use_label_actions=True,
-    min_action_weight=DEFAULT_MIN_MANN_ACTION_WEIGHT,
-    mirror=False,
-    mirror_axis=DEFAULT_MIRROR_AXIS,
-    show_progress=False,
-):
-    return _build_clip_database(
-        clip_path,
-        action_label,
-        frame_start,
-        frame_end,
-        "stage2",
-        scale=scale,
-        dt=dt,
-        sample_offsets=sample_offsets,
-        future_sample_indices=future_sample_indices,
-        use_label_actions=use_label_actions,
-        min_action_weight=min_action_weight,
-        mirror=mirror,
-        mirror_axis=mirror_axis,
-        show_progress=show_progress,
-    )
 
 
 def concatenate_clip_databases(databases):
@@ -680,14 +535,12 @@ def concatenate_clip_databases(databases):
     )
 
 
-def _build_dataset(
-    stage,
+def build_dataset(
     dataset_dir=DEFAULT_LAFAN1_DIR,
     scale=0.01,
     dt=DEFAULT_BVH_FRAME_TIME,
     sample_offsets=HUMANOID_LOCOMOTION_TRAJECTORY_SAMPLE_OFFSETS,
     future_sample_indices=HUMANOID_LOCOMOTION_TRAJECTORY_FUTURE_SAMPLE_INDICES,
-    use_label_actions=True,
     min_action_weight=DEFAULT_MIN_MANN_ACTION_WEIGHT,
     mirror=False,
     mirror_axis=DEFAULT_MIRROR_AXIS,
@@ -695,158 +548,60 @@ def _build_dataset(
     num_workers=1,
 ):
     clip_specs = list_locomotion_clips(dataset_dir)
-    num_workers = min(_resolve_worker_count(num_workers), max(1, len(clip_specs)))
-    build_fn = build_stage2_clip_database if stage == "stage2" else build_stage1_clip_database
+    num_workers = min(max(1, int(num_workers)), max(1, len(clip_specs)))
 
     if num_workers == 1:
         clip_iter = clip_specs
         if show_progress:
-            clip_iter = tqdm(clip_iter, desc=f"{stage} clips", leave=True)
+            clip_iter = tqdm(clip_iter, desc="clips", leave=True)
 
         databases = []
-        for clip_path, action_label, frame_start, frame_end in clip_iter:
-            if stage == "stage2":
-                databases.append(
-                    build_fn(
-                        clip_path,
-                        action_label,
-                        frame_start=frame_start,
-                        frame_end=frame_end,
-                        scale=scale,
-                        dt=dt,
-                        sample_offsets=sample_offsets,
-                        future_sample_indices=future_sample_indices,
-                        use_label_actions=use_label_actions,
-                        min_action_weight=min_action_weight,
-                        mirror=mirror,
-                        mirror_axis=mirror_axis,
-                        show_progress=show_progress,
-                    )
+        for clip_path, frame_start, frame_end in clip_iter:
+            databases.append(
+                build_clip_database(
+                    clip_path,
+                    frame_start=frame_start,
+                    frame_end=frame_end,
+                    scale=scale,
+                    dt=dt,
+                    sample_offsets=sample_offsets,
+                    future_sample_indices=future_sample_indices,
+                    min_action_weight=min_action_weight,
+                    mirror=mirror,
+                    mirror_axis=mirror_axis,
+                    show_progress=show_progress,
                 )
-            else:
-                databases.append(
-                    build_fn(
-                        clip_path,
-                        action_label,
-                        frame_start=frame_start,
-                        frame_end=frame_end,
-                        scale=scale,
-                        dt=dt,
-                        sample_offsets=sample_offsets,
-                        use_label_actions=use_label_actions,
-                        min_action_weight=min_action_weight,
-                        mirror=mirror,
-                        mirror_axis=mirror_axis,
-                        show_progress=show_progress,
-                    )
-                )
+            )
         return concatenate_clip_databases(databases)
 
-    if stage == "stage2":
-        job_specs = [
-            (
-                clip_path,
-                action_label,
-                frame_start,
-                frame_end,
-                scale,
-                dt,
-                sample_offsets,
-                future_sample_indices,
-                use_label_actions,
-                min_action_weight,
-                mirror,
-                mirror_axis,
-                False,
-            )
-            for clip_path, action_label, frame_start, frame_end in clip_specs
-        ]
-    else:
-        job_specs = [
-            (
-                clip_path,
-                action_label,
-                frame_start,
-                frame_end,
-                scale,
-                dt,
-                sample_offsets,
-                use_label_actions,
-                min_action_weight,
-                mirror,
-                mirror_axis,
-                False,
-            )
-            for clip_path, action_label, frame_start, frame_end in clip_specs
-        ]
+    job_specs = [
+        (
+            clip_path,
+            frame_start,
+            frame_end,
+            scale,
+            dt,
+            sample_offsets,
+            future_sample_indices,
+            min_action_weight,
+            mirror,
+            mirror_axis,
+            False,
+        )
+        for clip_path, frame_start, frame_end in clip_specs
+    ]
 
     databases = _run_parallel_jobs(
-        build_fn,
+        build_clip_database,
         job_specs,
         num_workers=num_workers,
         show_progress=show_progress,
-        progress_desc=f"{stage} clips ({num_workers} workers)",
+        progress_desc=f"clips ({num_workers} workers)",
     )
     return concatenate_clip_databases(databases)
 
 
-def build_stage1_dataset(
-    dataset_dir=DEFAULT_LAFAN1_DIR,
-    scale=0.01,
-    dt=DEFAULT_BVH_FRAME_TIME,
-    sample_offsets=HUMANOID_LOCOMOTION_TRAJECTORY_SAMPLE_OFFSETS,
-    use_label_actions=True,
-    min_action_weight=DEFAULT_MIN_MANN_ACTION_WEIGHT,
-    mirror=False,
-    mirror_axis=DEFAULT_MIRROR_AXIS,
-    show_progress=False,
-    num_workers=1,
-):
-    return _build_dataset(
-        "stage1",
-        dataset_dir=dataset_dir,
-        scale=scale,
-        dt=dt,
-        sample_offsets=sample_offsets,
-        use_label_actions=use_label_actions,
-        min_action_weight=min_action_weight,
-        mirror=mirror,
-        mirror_axis=mirror_axis,
-        show_progress=show_progress,
-        num_workers=num_workers,
-    )
-
-
-def build_stage2_dataset(
-    dataset_dir=DEFAULT_LAFAN1_DIR,
-    scale=0.01,
-    dt=DEFAULT_BVH_FRAME_TIME,
-    sample_offsets=HUMANOID_LOCOMOTION_TRAJECTORY_SAMPLE_OFFSETS,
-    future_sample_indices=HUMANOID_LOCOMOTION_TRAJECTORY_FUTURE_SAMPLE_INDICES,
-    use_label_actions=True,
-    min_action_weight=DEFAULT_MIN_MANN_ACTION_WEIGHT,
-    mirror=False,
-    mirror_axis=DEFAULT_MIRROR_AXIS,
-    show_progress=False,
-    num_workers=1,
-):
-    return _build_dataset(
-        "stage2",
-        dataset_dir=dataset_dir,
-        scale=scale,
-        dt=dt,
-        sample_offsets=sample_offsets,
-        future_sample_indices=future_sample_indices,
-        use_label_actions=use_label_actions,
-        min_action_weight=min_action_weight,
-        mirror=mirror,
-        mirror_axis=mirror_axis,
-        show_progress=show_progress,
-        num_workers=num_workers,
-    )
-
-
-def build_database_metadata(stage):
+def build_database_metadata():
     action_dim = len(HUMANOID_LOCOMOTION_ACTION_LABELS)
     prediction_joint_count = len(HUMANOID_LOCOMOTION_PREDICTION_JOINTS)
     sample_count = len(HUMANOID_LOCOMOTION_TRAJECTORY_SAMPLE_OFFSETS)
@@ -856,17 +611,15 @@ def build_database_metadata(stage):
     x_main_traj_dim = sample_count * (2 + 2 + 2)
     x_main_speed_dim = sample_count
     x_main_action_dim = sample_count * action_dim
-    # Historical metadata name kept for loader compatibility; this block now
-    # stores gating joint local positions followed by local velocities.
     x_gate_vel_dim = len(HUMANOID_LOCOMOTION_GATING_JOINTS) * (3 + 3)
     x_gate_action_dim = action_dim
     x_gate_speed_dim = 1
     y_pose_dim = prediction_joint_count * (3 + 6 + 3)
     y_root_dim = 3
-    y_future_dim = future_count * (2 + 2 + 2) if stage == "stage2" else 0
+    y_future_dim = future_count * (2 + 2 + 2)
 
     return {
-        "stage": np.asarray(stage),
+        "stage": np.asarray("stage2"),
         "x_main_pose_dim": np.asarray(x_main_pose_dim, dtype=np.int32),
         "x_main_traj_dim": np.asarray(x_main_traj_dim, dtype=np.int32),
         "x_main_speed_dim": np.asarray(x_main_speed_dim, dtype=np.int32),
@@ -880,10 +633,10 @@ def build_database_metadata(stage):
     }
 
 
-def save_dataset_npz(output_path, dataset, stage):
+def save_dataset_npz(output_path, dataset):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    metadata = build_database_metadata(stage)
+    metadata = build_database_metadata()
     np.savez_compressed(
         output_path,
         x_main=dataset.x_main,
@@ -903,14 +656,12 @@ def save_dataset_npz(output_path, dataset, stage):
 
 def build_arg_parser():
     parser = argparse.ArgumentParser(description="Build the MANN locomotion database.")
-    parser.add_argument("--stage", choices=("stage1", "stage2"), default="stage2", help="Database target set to build.")
     parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_LAFAN1_DIR, help="Directory containing LaFAN1 BVH clips.")
     parser.add_argument("--output", type=Path, default=None, help="Destination .npz file.")
     parser.add_argument("--scale", type=float, default=0.01, help="BVH import scale factor.")
-    parser.add_argument("--workers", type=int, default=1, help="Number of worker processes for clip-level export. Use 0 for auto.")
+    parser.add_argument("--workers", type=int, default=1, help="Number of worker processes for clip-level export.")
     parser.add_argument("--mirror", action="store_true", help="Add mirrored motion samples for each clip.")
     parser.add_argument("--mirror-axis", choices=("x", "y", "z"), default=DEFAULT_MIRROR_AXIS, help="World axis reflected by mirror augmentation.")
-    parser.add_argument("--no-label-actions", action="store_true", help="Use clip-level hard action labels instead of LabelModule frame labels.")
     parser.add_argument("--min-action-weight", type=float, default=DEFAULT_MIN_MANN_ACTION_WEIGHT, help="Minimum projected 4-class LabelModule action weight required for a frame.")
     parser.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars during database export.")
     return parser
@@ -920,33 +671,20 @@ def main():
     parser = build_arg_parser()
     args = parser.parse_args()
 
-    output_path = args.output or DEFAULT_OUTPUT_DIR / f"{args.stage}_locomotion_database.npz"
+    output_path = args.output or DEFAULT_OUTPUT_DIR / "stage2_locomotion_database.npz"
     show_progress = not args.no_progress
 
-    if args.stage == "stage2":
-        dataset = build_stage2_dataset(
-            dataset_dir=args.dataset_dir,
-            scale=args.scale,
-            use_label_actions=not args.no_label_actions,
-            min_action_weight=args.min_action_weight,
-            mirror=args.mirror,
-            mirror_axis=args.mirror_axis,
-            show_progress=show_progress,
-            num_workers=args.workers,
-        )
-    else:
-        dataset = build_stage1_dataset(
-            dataset_dir=args.dataset_dir,
-            scale=args.scale,
-            use_label_actions=not args.no_label_actions,
-            min_action_weight=args.min_action_weight,
-            mirror=args.mirror,
-            mirror_axis=args.mirror_axis,
-            show_progress=show_progress,
-            num_workers=args.workers,
-        )
+    dataset = build_dataset(
+        dataset_dir=args.dataset_dir,
+        scale=args.scale,
+        min_action_weight=args.min_action_weight,
+        mirror=args.mirror,
+        mirror_axis=args.mirror_axis,
+        show_progress=show_progress,
+        num_workers=args.workers,
+    )
 
-    save_dataset_npz(output_path, dataset, stage=args.stage)
+    save_dataset_npz(output_path, dataset)
 
     print(f"Saved database to {output_path}")
     print(f"Samples: {len(dataset.action_ids)}")
