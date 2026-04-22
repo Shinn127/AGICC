@@ -20,11 +20,28 @@ from raylib.defines import *
 
 from MotionMatching.MotionMatchingConfig import (
     DEFAULT_DATABASE_PATH,
+    MM_ACTION_FILTER_MODES,
+    MM_ACTION_HARD_THRESHOLD,
+    MM_ACTION_MIN_CANDIDATES,
+    MM_ACTION_SOFT_PENALTY,
+    MM_DEFAULT_ACTION_FILTER_MODE,
     MM_DEFAULT_SEARCH_BACKEND,
+    MM_FORCE_SEARCH_COOLDOWN,
+    MM_FORCE_SEARCH_ROTATION_THRESHOLD,
+    MM_FORCE_SEARCH_VELOCITY_THRESHOLD,
+    MM_IGNORE_RANGE_END_FRAMES,
+    MM_IGNORE_SURROUNDING_FRAMES,
     MM_KDTREE_EPS,
     MM_KDTREE_LEAF_SIZE,
     MM_KDTREE_MIN_SAMPLES,
     MM_KDTREE_QUERY_OVERSAMPLE,
+    MM_ROOT_ADJUSTMENT_POSITION_HALFLIFE,
+    MM_ROOT_ADJUSTMENT_POSITION_MAX_RATIO,
+    MM_ROOT_ADJUSTMENT_ROTATION_HALFLIFE,
+    MM_ROOT_ADJUSTMENT_ROTATION_MAX_RATIO,
+    MM_ROOT_CLAMPING_MAX_ANGLE,
+    MM_ROOT_CLAMPING_MAX_DISTANCE,
+    MM_ROOT_SYNCHRONIZATION_DATA_FACTOR,
     MM_SEARCH_BACKENDS,
 )
 from MotionMatching.MotionMatchingDataset import MotionMatchingDataset
@@ -82,6 +99,27 @@ class ViewerConfig:
     kd_leaf_size: int = MM_KDTREE_LEAF_SIZE
     kd_query_oversample: int = MM_KDTREE_QUERY_OVERSAMPLE
     kd_eps: float = MM_KDTREE_EPS
+    ignore_surrounding_frames: int = MM_IGNORE_SURROUNDING_FRAMES
+    ignore_range_end_frames: int = MM_IGNORE_RANGE_END_FRAMES
+    action_filter_mode: str = MM_DEFAULT_ACTION_FILTER_MODE
+    action_hard_threshold: float = MM_ACTION_HARD_THRESHOLD
+    action_min_candidates: int = MM_ACTION_MIN_CANDIDATES
+    action_soft_penalty: float = MM_ACTION_SOFT_PENALTY
+    force_search_enabled: bool = True
+    force_search_velocity_threshold: float = MM_FORCE_SEARCH_VELOCITY_THRESHOLD
+    force_search_rotation_threshold: float = MM_FORCE_SEARCH_ROTATION_THRESHOLD
+    force_search_cooldown: float = MM_FORCE_SEARCH_COOLDOWN
+    root_adjustment_enabled: bool = True
+    root_adjustment_by_velocity: bool = True
+    root_adjustment_position_halflife: float = MM_ROOT_ADJUSTMENT_POSITION_HALFLIFE
+    root_adjustment_rotation_halflife: float = MM_ROOT_ADJUSTMENT_ROTATION_HALFLIFE
+    root_adjustment_position_max_ratio: float = MM_ROOT_ADJUSTMENT_POSITION_MAX_RATIO
+    root_adjustment_rotation_max_ratio: float = MM_ROOT_ADJUSTMENT_ROTATION_MAX_RATIO
+    root_clamping_enabled: bool = True
+    root_clamping_max_distance: float = MM_ROOT_CLAMPING_MAX_DISTANCE
+    root_clamping_max_angle: float = MM_ROOT_CLAMPING_MAX_ANGLE
+    root_synchronization_enabled: bool = False
+    root_synchronization_data_factor: float = MM_ROOT_SYNCHRONIZATION_DATA_FACTOR
 
 
 @dataclass
@@ -92,7 +130,9 @@ class RawInputState:
     look_active: bool = False
     run_pressed: bool = False
     desired_strafe: bool = False
+    jump_down: bool = False
     jump_pressed: bool = False
+    jump_released: bool = False
     reset_pressed: bool = False
 
     def __post_init__(self):
@@ -132,7 +172,9 @@ def _read_gamepad_input(gamepad_id: int) -> RawInputState:
         look_active=bool(np.linalg.norm(look_2d) > 1e-3),
         run_pressed=bool(right_trigger > 0.5 or IsGamepadButtonDown(gamepad_id, GAMEPAD_BUTTON_RIGHT_TRIGGER_2)),
         desired_strafe=bool(left_trigger > 0.5 or IsGamepadButtonDown(gamepad_id, GAMEPAD_BUTTON_LEFT_TRIGGER_2)),
-        jump_pressed=bool(IsGamepadButtonDown(gamepad_id, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)),
+        jump_down=bool(IsGamepadButtonDown(gamepad_id, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)),
+        jump_pressed=bool(IsGamepadButtonPressed(gamepad_id, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)),
+        jump_released=bool(IsGamepadButtonReleased(gamepad_id, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)),
         reset_pressed=bool(IsGamepadButtonPressed(gamepad_id, GAMEPAD_BUTTON_MIDDLE_RIGHT)),
     )
 
@@ -159,7 +201,7 @@ def _build_intent_from_input(runtime: MotionMatchingRuntime, input_state: RawInp
     speed = DEFAULT_RUN_SPEED if input_state.run_pressed else DEFAULT_WALK_SPEED
     if not is_moving:
         speed = 0.0
-    if input_state.jump_pressed:
+    if input_state.jump_down:
         action_label = "jump"
     elif is_moving and input_state.run_pressed:
         action_label = "run"
@@ -174,6 +216,9 @@ def _build_intent_from_input(runtime: MotionMatchingRuntime, input_state: RawInp
         action_label,
         facing_direction_world=facing_world,
         desired_strafe=input_state.desired_strafe,
+        jump_down=input_state.jump_down,
+        jump_pressed=input_state.jump_pressed,
+        jump_released=input_state.jump_released,
     )
 
 
@@ -238,8 +283,29 @@ def _create_viewer_state(config: ViewerConfig):
     runtime = MotionMatchingRuntime(
         database,
         config=RuntimeConfig(
+            force_search_enabled=config.force_search_enabled,
+            force_search_velocity_threshold=config.force_search_velocity_threshold,
+            force_search_rotation_threshold=config.force_search_rotation_threshold,
+            force_search_cooldown=config.force_search_cooldown,
+            root_adjustment_enabled=config.root_adjustment_enabled,
+            root_adjustment_by_velocity=config.root_adjustment_by_velocity,
+            root_adjustment_position_halflife=config.root_adjustment_position_halflife,
+            root_adjustment_rotation_halflife=config.root_adjustment_rotation_halflife,
+            root_adjustment_position_max_ratio=config.root_adjustment_position_max_ratio,
+            root_adjustment_rotation_max_ratio=config.root_adjustment_rotation_max_ratio,
+            root_clamping_enabled=config.root_clamping_enabled,
+            root_clamping_max_distance=config.root_clamping_max_distance,
+            root_clamping_max_angle=config.root_clamping_max_angle,
+            root_synchronization_enabled=config.root_synchronization_enabled,
+            root_synchronization_data_factor=config.root_synchronization_data_factor,
             search_config=SearchConfig(
                 backend=config.search_backend,
+                ignore_surrounding_frames=config.ignore_surrounding_frames,
+                ignore_range_end_frames=config.ignore_range_end_frames,
+                action_filter_mode=config.action_filter_mode,
+                action_hard_threshold=config.action_hard_threshold,
+                action_min_candidates=config.action_min_candidates,
+                action_soft_penalty=config.action_soft_penalty,
                 kd_min_samples=config.kd_min_samples,
                 kd_leaf_size=config.kd_leaf_size,
                 kd_query_oversample=config.kd_query_oversample,
@@ -425,7 +491,7 @@ def _render_lighting_and_debug_pass(app, camera_pass):
 def _draw_ui(app):
     frame = app.frame
     search = frame.search_result
-    GuiGroupBox(Rectangle(20, 10, 430, 305), b"Geno Motion Matching")
+    GuiGroupBox(Rectangle(20, 10, 520, 405), b"Geno Motion Matching")
     GuiLabel(Rectangle(30, 30, 390, 20), b"Gamepad: left stick move, right stick face, RT run")
     GuiLabel(Rectangle(30, 50, 390, 20), b"LT strafe, A jump, menu/start reset")
     GuiLabel(Rectangle(30, 70, 390, 20), b"Ctrl + mouse: camera only, wheel: zoom")
@@ -443,18 +509,27 @@ def _draw_ui(app):
     )
     GuiLabel(Rectangle(30, 155, 390, 20), f"Index: {frame.current_index}  Transitions: {frame.transition_count}".encode("utf-8"))
     GuiLabel(Rectangle(30, 175, 390, 20), f"Root: x={frame.root_position[0]:.2f} z={frame.root_position[2]:.2f}".encode("utf-8"))
-    GuiLabel(Rectangle(30, 195, 390, 20), f"Speed: {np.linalg.norm(frame.root_velocity[[0, 2]]):.2f}  Query: {frame.query_distance:.2f}".encode("utf-8"))
     GuiLabel(
-        Rectangle(30, 215, 390, 20),
+        Rectangle(30, 195, 420, 20),
+        (
+            f"Sim: x={frame.simulation_position[0]:.2f} z={frame.simulation_position[2]:.2f} "
+            f"Err: {frame.root_position_error:.2f}m/{frame.root_rotation_error:.2f}rad"
+        ).encode("utf-8"),
+    )
+    GuiLabel(Rectangle(30, 215, 390, 20), f"Speed: {np.linalg.norm(frame.root_velocity[[0, 2]]):.2f}  Query: {frame.query_distance:.2f}".encode("utf-8"))
+    GuiLabel(
+        Rectangle(30, 235, 390, 20),
         (
             f"Cooldown: {frame.transition_cooldown:.2f}s "
             f"Look: {'on' if app.input_state.look_active else 'off'} "
             f"Strafe: {'on' if app.input_state.desired_strafe else 'off'} "
-            f"Jump: {'yes' if app.input_state.jump_pressed else 'no'}"
+            f"Jump: d={'1' if app.input_state.jump_down else '0'} "
+            f"p={'1' if app.input_state.jump_pressed else '0'} "
+            f"r={'1' if app.input_state.jump_released else '0'}"
         ).encode("utf-8"),
     )
     GuiLabel(
-        Rectangle(30, 235, 390, 20),
+        Rectangle(30, 255, 390, 20),
         (
             f"CmdVel: [{app.intent.desired_velocity_world[0]:.2f},{app.intent.desired_velocity_world[2]:.2f}] "
             f"Face: [{app.intent.desired_facing_world[0]:.2f},{app.intent.desired_facing_world[2]:.2f}]"
@@ -462,22 +537,46 @@ def _draw_ui(app):
     )
     if search is not None:
         GuiLabel(
-            Rectangle(30, 255, 390, 20),
+            Rectangle(30, 275, 430, 20),
             (
                 f"Search: idx={search.index} action={search.action_label} "
-                f"dist={search.distance:.2f} backend={search.backend}"
+                f"dist={search.distance:.2f} score={search.score:.2f} backend={search.backend}"
+            ).encode("utf-8"),
+        )
+        GuiLabel(
+            Rectangle(30, 295, 430, 20),
+            (
+                f"Candidates: {search.filtered_candidate_count}/{search.candidate_count} "
+                f"affinity={search.action_affinity:.2f} mode={search.action_filter_mode}"
             ).encode("utf-8"),
         )
     GuiLabel(
-        Rectangle(30, 275, 390, 20),
-        f"SearchMode: {app.search_backend}".encode("utf-8"),
+        Rectangle(30, 315, 430, 20),
+        (
+            f"SearchMode: {app.search_backend} reason={frame.search_reason} "
+            f"force={'yes' if frame.forced_search else 'no'} current={frame.current_score:.2f}"
+        ).encode("utf-8"),
     )
     action_weights = frame.action_weights
     GuiLabel(
-        Rectangle(30, 295, 390, 20),
+        Rectangle(30, 335, 390, 20),
         (
             f"ActionW: i={action_weights[0]:.2f} w={action_weights[1]:.2f} "
             f"r={action_weights[2]:.2f} j={action_weights[3]:.2f}"
+        ).encode("utf-8"),
+    )
+    GuiLabel(
+        Rectangle(30, 355, 480, 20),
+        (
+            f"ActionState: active={frame.active_action or 'none'} phase={frame.action_phase} "
+            f"pendingExit={'yes' if frame.pending_action_exit else 'no'}"
+        ).encode("utf-8"),
+    )
+    GuiLabel(
+        Rectangle(30, 375, 480, 20),
+        (
+            f"Candidates: mode={frame.candidate_mode} count={frame.candidate_count} "
+            f"forceTransition={'yes' if frame.force_transition else 'no'}"
         ).encode("utf-8"),
     )
 
@@ -511,6 +610,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kd-leaf-size", type=int, default=MM_KDTREE_LEAF_SIZE, help="scipy cKDTree leaf size.")
     parser.add_argument("--kd-query-oversample", type=int, default=MM_KDTREE_QUERY_OVERSAMPLE, help="Extra KDTree neighbors before exact rerank.")
     parser.add_argument("--kd-eps", type=float, default=MM_KDTREE_EPS, help="Approximation epsilon for cKDTree.query.")
+    parser.add_argument("--ignore-surrounding-frames", type=int, default=MM_IGNORE_SURROUNDING_FRAMES, help="Exclude frames near the current sample from search.")
+    parser.add_argument("--ignore-range-end-frames", type=int, default=MM_IGNORE_RANGE_END_FRAMES, help="Exclude samples too close to the end of a range.")
+    parser.add_argument("--action-filter-mode", choices=MM_ACTION_FILTER_MODES, default=MM_DEFAULT_ACTION_FILTER_MODE, help="Action-aware search mode.")
+    parser.add_argument("--action-hard-threshold", type=float, default=MM_ACTION_HARD_THRESHOLD, help="Minimum action affinity for hard action filtering.")
+    parser.add_argument("--action-min-candidates", type=int, default=MM_ACTION_MIN_CANDIDATES, help="Minimum hard-filtered candidates before falling back.")
+    parser.add_argument("--action-soft-penalty", type=float, default=MM_ACTION_SOFT_PENALTY, help="Score penalty for action mismatch.")
+    parser.add_argument("--disable-force-search", action="store_true", help="Disable force-search when input changes settle.")
+    parser.add_argument("--force-search-velocity-threshold", type=float, default=MM_FORCE_SEARCH_VELOCITY_THRESHOLD, help="Velocity change threshold for force-search settling.")
+    parser.add_argument("--force-search-rotation-threshold", type=float, default=MM_FORCE_SEARCH_ROTATION_THRESHOLD, help="Rotation change threshold for force-search settling.")
+    parser.add_argument("--force-search-cooldown", type=float, default=MM_FORCE_SEARCH_COOLDOWN, help="Cooldown between force-search triggers.")
+    parser.add_argument("--disable-root-adjustment", action="store_true", help="Disable smooth root-to-simulation adjustment.")
+    parser.add_argument("--disable-root-adjustment-velocity-limit", action="store_true", help="Disable velocity-limited root adjustment.")
+    parser.add_argument("--root-adjustment-position-halflife", type=float, default=MM_ROOT_ADJUSTMENT_POSITION_HALFLIFE, help="Root position adjustment halflife.")
+    parser.add_argument("--root-adjustment-rotation-halflife", type=float, default=MM_ROOT_ADJUSTMENT_ROTATION_HALFLIFE, help="Root rotation adjustment halflife.")
+    parser.add_argument("--root-adjustment-position-max-ratio", type=float, default=MM_ROOT_ADJUSTMENT_POSITION_MAX_RATIO, help="Velocity ratio cap for position adjustment.")
+    parser.add_argument("--root-adjustment-rotation-max-ratio", type=float, default=MM_ROOT_ADJUSTMENT_ROTATION_MAX_RATIO, help="Angular velocity ratio cap for rotation adjustment.")
+    parser.add_argument("--disable-root-clamping", action="store_true", help="Disable hard root-to-simulation clamping.")
+    parser.add_argument("--root-clamping-max-distance", type=float, default=MM_ROOT_CLAMPING_MAX_DISTANCE, help="Maximum root distance from simulation before clamping.")
+    parser.add_argument("--root-clamping-max-angle", type=float, default=MM_ROOT_CLAMPING_MAX_ANGLE, help="Maximum root yaw offset from simulation before clamping.")
+    parser.add_argument("--enable-root-synchronization", action="store_true", help="Synchronize root and simulation directly.")
+    parser.add_argument("--root-synchronization-data-factor", type=float, default=MM_ROOT_SYNCHRONIZATION_DATA_FACTOR, help="0 follows simulation, 1 follows data root during synchronization.")
     return parser
 
 
@@ -526,6 +646,27 @@ def main() -> None:
         kd_leaf_size=args.kd_leaf_size,
         kd_query_oversample=args.kd_query_oversample,
         kd_eps=args.kd_eps,
+        ignore_surrounding_frames=args.ignore_surrounding_frames,
+        ignore_range_end_frames=args.ignore_range_end_frames,
+        action_filter_mode=args.action_filter_mode,
+        action_hard_threshold=args.action_hard_threshold,
+        action_min_candidates=args.action_min_candidates,
+        action_soft_penalty=args.action_soft_penalty,
+        force_search_enabled=not args.disable_force_search,
+        force_search_velocity_threshold=args.force_search_velocity_threshold,
+        force_search_rotation_threshold=args.force_search_rotation_threshold,
+        force_search_cooldown=args.force_search_cooldown,
+        root_adjustment_enabled=not args.disable_root_adjustment,
+        root_adjustment_by_velocity=not args.disable_root_adjustment_velocity_limit,
+        root_adjustment_position_halflife=args.root_adjustment_position_halflife,
+        root_adjustment_rotation_halflife=args.root_adjustment_rotation_halflife,
+        root_adjustment_position_max_ratio=args.root_adjustment_position_max_ratio,
+        root_adjustment_rotation_max_ratio=args.root_adjustment_rotation_max_ratio,
+        root_clamping_enabled=not args.disable_root_clamping,
+        root_clamping_max_distance=args.root_clamping_max_distance,
+        root_clamping_max_angle=args.root_clamping_max_angle,
+        root_synchronization_enabled=args.enable_root_synchronization,
+        root_synchronization_data_factor=args.root_synchronization_data_factor,
     )
     SetConfigFlags(FLAG_VSYNC_HINT)
     InitWindow(config.screen_width, config.screen_height, b"Geno Motion Matching Controller")

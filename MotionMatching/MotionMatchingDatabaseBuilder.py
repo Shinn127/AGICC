@@ -256,8 +256,10 @@ def _build_clip_variant_database(
         action_weights,
         future_sample_offsets=future_sample_offsets,
     )
-    action_weights = normalize_action_weights(action_weights, action_count=len(MM_ACTION_LABELS))
-    frame_action_weights = action_weights[frame_indices].astype(np.float32)
+    frame_action_weights = normalize_action_weights(
+        np.asarray(action_weights, dtype=np.float32)[frame_indices],
+        action_count=len(MM_ACTION_LABELS),
+    ).astype(np.float32)
     action_ids = np.argmax(frame_action_weights, axis=1).astype(np.int32)
 
     return MotionMatchingClipDatabase(

@@ -233,7 +233,9 @@ def build_raw_feature_matrix(
     future_sample_offsets=MM_FUTURE_SAMPLE_OFFSETS,
 ) -> np.ndarray:
     frame_indices = np.asarray(frame_indices, dtype=np.int32)
-    action_weights = normalize_action_weights(action_weights)
+    frame_action_weights = normalize_action_weights(
+        np.asarray(action_weights, dtype=np.float32)[frame_indices],
+    )
     future_positions, future_directions, future_velocities = build_future_trajectory_features(
         root_trajectory_source,
         frame_indices,
@@ -253,7 +255,7 @@ def build_raw_feature_matrix(
             future_positions_xz,
             future_directions_xz,
             future_velocities_xz,
-            action_weights[frame_indices],
+            frame_action_weights,
         ],
         axis=-1,
     ).astype(np.float32)
