@@ -12,43 +12,35 @@ LABEL_IDLE = "idle"
 LABEL_WALK = "walk"
 LABEL_RUN = "run"
 LABEL_JUMP = "jump"
+LABEL_CROUCH = "crouch"
+LABEL_TRANSITION = "transition"
+LABEL_OTHER = "other"
 LABEL_FALL = "fall"
 LABEL_GROUND = "ground"
 LABEL_GET_UP = "get_up"
-LABEL_TRANSITION = "transition"
-LABEL_OTHER = "other"
 
-ACTION_LABELS = (
+TARGET_ACTION_LABELS = (
     LABEL_IDLE,
     LABEL_WALK,
     LABEL_RUN,
     LABEL_JUMP,
-    LABEL_FALL,
-    LABEL_GROUND,
-    LABEL_GET_UP,
-    LABEL_TRANSITION,
+    LABEL_CROUCH,
     LABEL_OTHER,
 )
 
-LABEL_TO_INDEX = {label: index for index, label in enumerate(ACTION_LABELS)}
-
-CLIP_PRIOR_WALK = "walk"
-CLIP_PRIOR_RUN = "run"
-CLIP_PRIOR_JUMP = "jump"
-CLIP_PRIOR_FALL_RECOVERY = "fall_recovery"
-CLIP_PRIOR_GROUND = "ground"
-CLIP_PRIOR_MIXED = "mixed"
-CLIP_PRIOR_OTHER = "other"
-
-CLIP_PRIORS = (
-    CLIP_PRIOR_WALK,
-    CLIP_PRIOR_RUN,
-    CLIP_PRIOR_JUMP,
-    CLIP_PRIOR_FALL_RECOVERY,
-    CLIP_PRIOR_GROUND,
-    CLIP_PRIOR_MIXED,
-    CLIP_PRIOR_OTHER,
+ACTION_LABELS = (
+    *TARGET_ACTION_LABELS,
+    LABEL_TRANSITION,
 )
+
+LABEL_TO_INDEX = {label: index for index, label in enumerate(ACTION_LABELS)}
+TARGET_LABEL_TO_INDEX = {label: index for index, label in enumerate(TARGET_ACTION_LABELS)}
+
+LEGACY_LABEL_MAP = {
+    LABEL_FALL: LABEL_OTHER,
+    LABEL_GROUND: LABEL_OTHER,
+    LABEL_GET_UP: LABEL_OTHER,
+}
 
 DEFAULT_TRANSITION_FRAMES = 8
 IDLE_SPEED_THRESHOLD = 0.135
@@ -56,81 +48,74 @@ WALK_SPEED_LOW = 0.15
 WALK_SPEED_HIGH = 1.60
 RUN_SPEED_THRESHOLD = 1.50
 RUN_SPEED_SCALE = 0.85
+MAX_LABEL_HISTORY = 64
+DEFAULT_FLIGHT_RATIO_WINDOW = 15
+GET_UP_CONTEXT_LOOKBACK = 18
+GET_UP_SPEED_THRESHOLD = 0.9
+GET_UP_SPEED_SCALE = 0.6
+DEFAULT_TRANSITION_MIN_SEGMENT_LENGTH = 8
+DEFAULT_TRANSITION_MAX_SCORE_MARGIN = 0.35
+DEFAULT_IDLE_MIN_SECONDS = 0.25
+DEFAULT_WALK_MIN_SECONDS = 0.20
+DEFAULT_RUN_MIN_SECONDS = 0.20
+DEFAULT_JUMP_MIN_SECONDS = 0.12
+DEFAULT_CROUCH_MIN_SECONDS = 0.25
+DEFAULT_OTHER_MIN_SECONDS = 0.08
+DEFAULT_CROUCH_GAP_SECONDS = 0.10
+DEFAULT_JUMP_GAP_SECONDS = 0.05
+DEFAULT_JUMP_SCAN_SECONDS = 0.18
+DEFAULT_TRANSITION_MIN_SECONDS = 0.12
 TPOSE_ARM_SIDE_ALIGNMENT = 0.75
 TPOSE_ARM_OPPOSITION_DOT = -0.75
 TPOSE_MAX_VERTICAL_RATIO = 0.25
 TPOSE_MIN_ARM_LENGTH = 0.15
 
-_CLIP_PRIOR_PREFIX_MAP = (
-    ("walk", CLIP_PRIOR_WALK),
-    ("run", CLIP_PRIOR_RUN),
-    ("sprint", CLIP_PRIOR_RUN),
-    ("jumps", CLIP_PRIOR_JUMP),
-    ("fallandgetup", CLIP_PRIOR_FALL_RECOVERY),
-    ("pushandfall", CLIP_PRIOR_FALL_RECOVERY),
-    ("ground", CLIP_PRIOR_GROUND),
-    ("multipleactions", CLIP_PRIOR_MIXED),
-    ("aiming", CLIP_PRIOR_OTHER),
-    ("dance", CLIP_PRIOR_OTHER),
-    ("fightandsports", CLIP_PRIOR_OTHER),
-    ("fight", CLIP_PRIOR_OTHER),
-    ("obstacles", CLIP_PRIOR_OTHER),
-    ("pushandstumble", CLIP_PRIOR_OTHER),
-    ("push", CLIP_PRIOR_OTHER),
-)
 
-_CLIP_PRIOR_CANDIDATE_LABELS = {
-    CLIP_PRIOR_WALK: (
-        LABEL_IDLE,
-        LABEL_WALK,
-        LABEL_RUN,
-        LABEL_JUMP,
-        LABEL_TRANSITION,
-        LABEL_OTHER,
-    ),
-    CLIP_PRIOR_RUN: (
-        LABEL_IDLE,
-        LABEL_WALK,
-        LABEL_RUN,
-        LABEL_JUMP,
-        LABEL_TRANSITION,
-        LABEL_OTHER,
-    ),
-    CLIP_PRIOR_JUMP: (
-        LABEL_IDLE,
-        LABEL_WALK,
-        LABEL_RUN,
-        LABEL_JUMP,
-        LABEL_TRANSITION,
-        LABEL_OTHER,
-    ),
-    CLIP_PRIOR_FALL_RECOVERY: (
-        LABEL_FALL,
-        LABEL_GROUND,
-        LABEL_GET_UP,
-        LABEL_TRANSITION,
-        LABEL_OTHER,
-    ),
-    CLIP_PRIOR_GROUND: (
-        LABEL_FALL,
-        LABEL_GROUND,
-        LABEL_GET_UP,
-        LABEL_TRANSITION,
-        LABEL_OTHER,
-    ),
-    CLIP_PRIOR_MIXED: ACTION_LABELS,
-    CLIP_PRIOR_OTHER: (
-        LABEL_IDLE,
-        LABEL_WALK,
-        LABEL_RUN,
-        LABEL_JUMP,
-        LABEL_FALL,
-        LABEL_GROUND,
-        LABEL_GET_UP,
-        LABEL_TRANSITION,
-        LABEL_OTHER,
-    ),
-}
+@dataclass
+class LabelAutoParams:
+    run_speed_threshold: float = RUN_SPEED_THRESHOLD
+    walk_min_speed_percentile: float = 20.0
+    run_flight_threshold: float = 0.10
+    run_low_contact_max: float = 0.25
+    run_speed_margin_ratio: float = 0.10
+    turn_yaw_rate_threshold: float = 1.20
+    turn_speed_min: float = 0.25
+    turn_context_seconds: float = 0.35
+    crouch_deep_torso_ratio: float = 0.87
+    crouch_locomotion_torso_ratio: float = 0.93
+    crouch_knee_flexion_min: float = 50.0
+    crouch_speed_max: float = 1.30
+    crouch_min_seconds: float = DEFAULT_CROUCH_MIN_SECONDS
+    crouch_gap_seconds: float = DEFAULT_CROUCH_GAP_SECONDS
+    jump_vy_body_ratio: float = 0.80
+    jump_lift_body_ratio: float = 0.08
+    jump_min_air_seconds: float = 0.08
+    jump_pre_seconds: float = 0.12
+    jump_post_seconds: float = 0.18
+    jump_scan_seconds: float = DEFAULT_JUMP_SCAN_SECONDS
+    jump_gap_seconds: float = DEFAULT_JUMP_GAP_SECONDS
+    smoothing_window: int = 7
+    transition_frames: int = DEFAULT_TRANSITION_FRAMES
+    transition_max_score_margin: float = DEFAULT_TRANSITION_MAX_SCORE_MARGIN
+    transition_min_seconds: float = DEFAULT_TRANSITION_MIN_SECONDS
+
+
+def CreateDefaultLabelAutoParams() -> LabelAutoParams:
+    return LabelAutoParams()
+
+
+def CoerceLabelAutoParams(params=None) -> LabelAutoParams:
+    if params is None:
+        return CreateDefaultLabelAutoParams()
+    if isinstance(params, LabelAutoParams):
+        return params
+    if isinstance(params, dict):
+        result = CreateDefaultLabelAutoParams()
+        for key, value in params.items():
+            if hasattr(result, key):
+                setattr(result, key, value)
+        return result
+    raise TypeError(f"Unsupported label auto params type: {type(params)!r}")
 
 
 @dataclass(frozen=True)
@@ -156,11 +141,11 @@ class LabelSegment:
 @dataclass
 class LabelModuleResult:
     clip_name: str
-    clip_prior: str
-    candidate_labels: tuple[str, ...]
     feature_source: Optional[dict] = None
+    auto_params: LabelAutoParams = field(default_factory=CreateDefaultLabelAutoParams)
     auto_scores: Optional[np.ndarray] = None
     auto_labels: Optional[np.ndarray] = None
+    auto_confidence: Optional[np.ndarray] = None
     auto_segments: list[LabelSegment] = field(default_factory=list)
     manual_labels: Optional[np.ndarray] = None
     final_labels: Optional[np.ndarray] = None
@@ -169,6 +154,8 @@ class LabelModuleResult:
     transition_overrides: list[dict] = field(default_factory=list)
     annotation_path: Optional[str] = None
     annotation_loaded: bool = False
+    undo_stack: list[dict] = field(default_factory=list)
+    redo_stack: list[dict] = field(default_factory=list)
 
 
 def NormalizeClipName(clipNameOrPath: str) -> str:
@@ -176,34 +163,17 @@ def NormalizeClipName(clipNameOrPath: str) -> str:
     return clipName.strip()
 
 
-def _canonicalize_clip_key(clipNameOrPath: str) -> str:
-    clipName = NormalizeClipName(clipNameOrPath).lower()
-    if "_subject" in clipName:
-        clipName = clipName.split("_subject", 1)[0]
-    return "".join(character for character in clipName if character.isalnum())
-
-
-def GetClipPriorFromName(clipNameOrPath: str) -> str:
-    clipKey = _canonicalize_clip_key(clipNameOrPath)
-
-    for prefix, clipPrior in _CLIP_PRIOR_PREFIX_MAP:
-        if clipKey.startswith(prefix):
-            return clipPrior
-
-    return CLIP_PRIOR_OTHER
-
-
-def GetCandidateLabelsFromPrior(clipPrior: str) -> tuple[str, ...]:
-    if clipPrior not in _CLIP_PRIOR_CANDIDATE_LABELS:
-        raise ValueError(f'Unsupported clip prior "{clipPrior}".')
-    return _CLIP_PRIOR_CANDIDATE_LABELS[clipPrior]
+def _remap_legacy_label(label):
+    return LEGACY_LABEL_MAP.get(str(label), str(label))
 
 
 def BuildLabelModuleResult(
     clipNameOrPath: str,
     featureSource=None,
+    autoParams=None,
     autoScores=None,
     autoLabels=None,
+    autoConfidence=None,
     autoSegments=None,
     manualLabels=None,
     finalLabels=None,
@@ -214,16 +184,14 @@ def BuildLabelModuleResult(
     annotationLoaded=False,
 ) -> LabelModuleResult:
     clipName = NormalizeClipName(clipNameOrPath)
-    clipPrior = GetClipPriorFromName(clipName)
-    candidateLabels = GetCandidateLabelsFromPrior(clipPrior)
 
     return LabelModuleResult(
         clip_name=clipName,
-        clip_prior=clipPrior,
-        candidate_labels=candidateLabels,
         feature_source=featureSource,
+        auto_params=CoerceLabelAutoParams(autoParams),
         auto_scores=None if autoScores is None else np.asarray(autoScores, dtype=np.float32),
         auto_labels=None if autoLabels is None else np.asarray(autoLabels),
+        auto_confidence=None if autoConfidence is None else np.asarray(autoConfidence, dtype=np.float32),
         auto_segments=[] if autoSegments is None else list(autoSegments),
         manual_labels=None if manualLabels is None else np.asarray(manualLabels, dtype=object),
         final_labels=None if finalLabels is None else np.asarray(finalLabels),
@@ -269,6 +237,109 @@ def _score_greater(values, threshold, scale):
 def _score_less(values, threshold, scale):
     values = np.asarray(values, dtype=np.float32)
     return np.clip((float(threshold) - values) / max(float(scale), 1e-6), 0.0, 1.0).astype(np.float32)
+
+
+def _lookback_max(values, windowSize):
+    values = np.asarray(values, dtype=np.float32)
+    if len(values) == 0:
+        return np.zeros((0,), dtype=np.float32)
+    if windowSize <= 1:
+        return values.copy()
+
+    result = np.zeros_like(values, dtype=np.float32)
+    windowSize = max(1, int(windowSize))
+    for frameIndex in range(len(values)):
+        start = max(0, frameIndex - windowSize + 1)
+        result[frameIndex] = float(np.max(values[start:frameIndex + 1]))
+    return result.astype(np.float32)
+
+
+def _score_margin(scores):
+    scores = np.asarray(scores, dtype=np.float32)
+    if scores.ndim != 2:
+        raise ValueError("scores must be a 2D array.")
+    if scores.shape[1] < 2:
+        return np.full((scores.shape[0],), np.inf, dtype=np.float32)
+
+    top2 = np.partition(scores, scores.shape[1] - 2, axis=1)[:, -2:]
+    return (top2[:, 1] - top2[:, 0]).astype(np.float32)
+
+
+def _sliding_mean(values, windowSize):
+    values = np.asarray(values, dtype=np.float32).reshape(-1)
+    if len(values) == 0:
+        return np.zeros((0,), dtype=np.float32)
+    if windowSize <= 1:
+        return values.copy()
+
+    windowSize = max(1, int(windowSize))
+    radius = windowSize // 2
+    padded = np.pad(values, (radius, radius), mode="edge")
+    kernel = np.ones((windowSize,), dtype=np.float32) / float(windowSize)
+    return np.convolve(padded, kernel, mode="valid").astype(np.float32)
+
+
+def _keep_mask_segments_longer_than(mask, minFrames):
+    mask = np.asarray(mask, dtype=bool)
+    if len(mask) == 0 or minFrames <= 1:
+        return mask.copy()
+
+    result = mask.copy()
+    start = None
+    for frameIndex, active in enumerate(mask):
+        if active and start is None:
+            start = frameIndex
+        elif not active and start is not None:
+            if frameIndex - start < int(minFrames):
+                result[start:frameIndex] = False
+            start = None
+    if start is not None and len(mask) - start < int(minFrames):
+        result[start:] = False
+    return result
+
+
+def _seconds_to_frames(dt, seconds, minimum=1):
+    dt = max(float(dt), 1e-6)
+    return max(int(minimum), int(round(float(seconds) / dt)))
+
+
+def _close_mask_gaps(mask, maxGapFrames):
+    mask = np.asarray(mask, dtype=bool)
+    if len(mask) == 0 or maxGapFrames <= 0:
+        return mask.copy()
+
+    result = mask.copy()
+    falseStart = None
+    seenTrue = False
+    for frameIndex, active in enumerate(mask):
+        if active:
+            if falseStart is not None and seenTrue and (frameIndex - falseStart) <= int(maxGapFrames):
+                result[falseStart:frameIndex] = True
+            falseStart = None
+            seenTrue = True
+        elif falseStart is None:
+            falseStart = frameIndex
+    return result.astype(bool)
+
+
+def _vector_angle_degrees(vectorA, vectorB):
+    vectorA = np.asarray(vectorA, dtype=np.float32)
+    vectorB = np.asarray(vectorB, dtype=np.float32)
+    vectorA = vectorA / np.maximum(np.linalg.norm(vectorA, axis=-1, keepdims=True), 1e-8)
+    vectorB = vectorB / np.maximum(np.linalg.norm(vectorB, axis=-1, keepdims=True), 1e-8)
+    cosine = np.clip(np.sum(vectorA * vectorB, axis=-1), -1.0, 1.0)
+    return np.degrees(np.arccos(cosine)).astype(np.float32)
+
+
+def _joint_angle_degrees(positionA, positionB, positionC):
+    return _vector_angle_degrees(positionA - positionB, positionC - positionB)
+
+
+def _joint_height_series(globalPositions, jointNames, jointName):
+    jointIndex = _find_joint_index(jointNames, jointName)
+    if jointIndex is None:
+        return np.zeros((len(globalPositions),), dtype=np.float32)
+    return np.asarray(globalPositions[:, jointIndex, 1], dtype=np.float32)
 
 
 def _estimate_standing_height(rootHeightAboveGround):
@@ -442,6 +513,254 @@ def _compute_t_pose_mask(globalPositions, rootDirections, jointNames=None):
     return (longEnough & roughlyHorizontal & sideAligned & armsOpposed).astype(np.float32)
 
 
+def _compute_torso_height(globalPositions, jointNames=None):
+    globalPositions = np.asarray(globalPositions, dtype=np.float32)
+    frameCount = int(len(globalPositions))
+    if frameCount == 0 or globalPositions.ndim != 3 or not jointNames:
+        return np.zeros((frameCount,), dtype=np.float32)
+
+    hipsIndex = _find_joint_index(jointNames, "Hips")
+    headIndex = _find_joint_index(jointNames, "Head")
+    if hipsIndex is None or headIndex is None:
+        return np.zeros((frameCount,), dtype=np.float32)
+
+    torsoHeight = globalPositions[:, headIndex, 1] - globalPositions[:, hipsIndex, 1]
+    return torsoHeight.astype(np.float32)
+
+
+def _select_side_joint_candidates(jointNames, candidates):
+    jointIndices = []
+    for jointName in candidates:
+        jointIndex = _find_joint_index(jointNames, jointName)
+        if jointIndex is not None:
+            jointIndices.append(jointIndex)
+    return jointIndices
+
+
+def _compute_side_contact_features(globalPositions, globalVelocities, terrainProvider, jointNames, sidePrefix):
+    frameCount = int(len(globalPositions))
+    if frameCount == 0:
+        return {
+            "height": np.zeros((0,), dtype=np.float32),
+            "speed_xy": np.zeros((0,), dtype=np.float32),
+            "position": np.zeros((0, 3), dtype=np.float32),
+        }
+
+    candidates = _select_side_joint_candidates(
+        jointNames,
+        (
+            f"{sidePrefix}ToeBase",
+            f"{sidePrefix}Foot",
+        ),
+    )
+    if not candidates:
+        return {
+            "height": np.zeros((frameCount,), dtype=np.float32),
+            "speed_xy": np.zeros((frameCount,), dtype=np.float32),
+            "position": np.zeros((frameCount, 3), dtype=np.float32),
+        }
+
+    positions = np.asarray(globalPositions[:, candidates], dtype=np.float32)
+    velocities = np.asarray(globalVelocities[:, candidates], dtype=np.float32)
+    horizontalSpeeds = np.linalg.norm(velocities[..., [0, 2]], axis=-1).astype(np.float32)
+
+    if terrainProvider is not None:
+        terrainHeights = terrainProvider.sample_heights(positions.reshape(-1, 3)).reshape(positions.shape[:2]).astype(np.float32)
+    else:
+        terrainHeights = np.zeros(positions.shape[:2], dtype=np.float32)
+
+    heights = (positions[..., 1] - terrainHeights).astype(np.float32)
+    supportIndices = np.argmin(heights, axis=1)
+    frameIndices = np.arange(frameCount, dtype=np.int32)
+    supportPositions = positions[frameIndices, supportIndices].astype(np.float32)
+    supportHeights = heights[frameIndices, supportIndices].astype(np.float32)
+    supportSpeeds = horizontalSpeeds[frameIndices, supportIndices].astype(np.float32)
+
+    return {
+        "height": supportHeights,
+        "speed_xy": supportSpeeds,
+        "position": supportPositions,
+    }
+
+
+def _estimate_ground_height(leftFootHeights, rightFootHeights):
+    leftFootHeights = np.asarray(leftFootHeights, dtype=np.float32)
+    rightFootHeights = np.asarray(rightFootHeights, dtype=np.float32)
+    if leftFootHeights.size == 0 and rightFootHeights.size == 0:
+        return 0.0
+    stacked = np.minimum(leftFootHeights, rightFootHeights) if leftFootHeights.size and rightFootHeights.size else (
+        leftFootHeights if leftFootHeights.size else rightFootHeights
+    )
+    return float(np.percentile(stacked, 1))
+
+
+def _estimate_body_height(globalPositions, terrainHeights, rootHeightAboveGround, jointNames=None):
+    globalPositions = np.asarray(globalPositions, dtype=np.float32)
+    terrainHeights = np.asarray(terrainHeights, dtype=np.float32)
+    rootHeightAboveGround = np.asarray(rootHeightAboveGround, dtype=np.float32)
+    frameCount = int(len(globalPositions))
+    if frameCount == 0:
+        return 1.0
+
+    headIndex = _find_joint_index(jointNames, "Head")
+    headHeightAboveGround = None
+    if headIndex is not None:
+        headHeightAboveGround = (globalPositions[:, headIndex, 1] - terrainHeights).astype(np.float32)
+        if np.any(np.isfinite(headHeightAboveGround)):
+            estimate = float(np.percentile(headHeightAboveGround, 90))
+            if estimate > 1e-3:
+                return estimate
+
+    if rootHeightAboveGround.size > 0:
+        fallback = float(np.percentile(rootHeightAboveGround, 90)) / 0.55
+        if fallback > 1e-3:
+            return fallback
+    return 1.0
+
+
+def _estimate_standing_hips_height(rootHeightAboveGround, groundedMask, rootHorizontalSpeed, motionEnergy):
+    rootHeightAboveGround = np.asarray(rootHeightAboveGround, dtype=np.float32)
+    groundedMask = np.asarray(groundedMask, dtype=bool)
+    rootHorizontalSpeed = np.asarray(rootHorizontalSpeed, dtype=np.float32)
+    motionEnergy = np.asarray(motionEnergy, dtype=np.float32)
+
+    if rootHeightAboveGround.size == 0:
+        return 1.0
+
+    if np.any(groundedMask):
+        groundedSpeeds = rootHorizontalSpeed[groundedMask]
+        groundedEnergy = motionEnergy[groundedMask]
+        speedThreshold = float(np.percentile(groundedSpeeds, 25)) if groundedSpeeds.size > 0 else float(np.percentile(rootHorizontalSpeed, 25))
+        energyThreshold = float(np.percentile(groundedEnergy, 35)) if groundedEnergy.size > 0 else float(np.percentile(motionEnergy, 35))
+        candidates = groundedMask & (rootHorizontalSpeed <= speedThreshold) & (motionEnergy <= energyThreshold)
+        if np.sum(candidates) >= 12:
+            return float(np.percentile(rootHeightAboveGround[candidates], 80))
+
+    return float(np.percentile(rootHeightAboveGround, 85))
+
+
+def _compute_calibration_pose_masks(
+    globalPositions,
+    jointNames,
+    bodyHeight,
+    rootHorizontalSpeed,
+    motionEnergy,
+    upperBodyEnergy,
+):
+    frameCount = int(len(globalPositions))
+    emptyMask = np.zeros((frameCount,), dtype=np.float32)
+    if frameCount == 0 or globalPositions.ndim != 3 or not jointNames:
+        return {
+            "t_pose_mask": emptyMask,
+            "a_pose_mask": emptyMask,
+            "calibration_pose_mask": emptyMask,
+            "left_elbow_angle": emptyMask,
+            "right_elbow_angle": emptyMask,
+            "left_arm_abduction": emptyMask,
+            "right_arm_abduction": emptyMask,
+        }
+
+    leftShoulderIndex = _find_joint_index(jointNames, "LeftShoulder")
+    leftArmIndex = _find_joint_index(jointNames, "LeftArm")
+    leftForeArmIndex = _find_joint_index(jointNames, "LeftForeArm")
+    leftHandIndex = _find_joint_index(jointNames, "LeftHand")
+    rightShoulderIndex = _find_joint_index(jointNames, "RightShoulder")
+    rightArmIndex = _find_joint_index(jointNames, "RightArm")
+    rightForeArmIndex = _find_joint_index(jointNames, "RightForeArm")
+    rightHandIndex = _find_joint_index(jointNames, "RightHand")
+    hipsIndex = _find_joint_index(jointNames, "Hips")
+    if None in (
+        leftShoulderIndex,
+        leftArmIndex,
+        leftForeArmIndex,
+        leftHandIndex,
+        rightShoulderIndex,
+        rightArmIndex,
+        rightForeArmIndex,
+        rightHandIndex,
+        hipsIndex,
+    ):
+        return {
+            "t_pose_mask": emptyMask,
+            "a_pose_mask": emptyMask,
+            "calibration_pose_mask": emptyMask,
+            "left_elbow_angle": emptyMask,
+            "right_elbow_angle": emptyMask,
+            "left_arm_abduction": emptyMask,
+            "right_arm_abduction": emptyMask,
+        }
+
+    leftShoulder = globalPositions[:, leftShoulderIndex]
+    leftArm = globalPositions[:, leftArmIndex]
+    leftForeArm = globalPositions[:, leftForeArmIndex]
+    leftHand = globalPositions[:, leftHandIndex]
+    rightShoulder = globalPositions[:, rightShoulderIndex]
+    rightArm = globalPositions[:, rightArmIndex]
+    rightForeArm = globalPositions[:, rightForeArmIndex]
+    rightHand = globalPositions[:, rightHandIndex]
+    hips = globalPositions[:, hipsIndex]
+
+    leftElbowAngle = _joint_angle_degrees(leftArm, leftForeArm, leftHand)
+    rightElbowAngle = _joint_angle_degrees(rightArm, rightForeArm, rightHand)
+    downAxis = np.zeros((frameCount, 3), dtype=np.float32)
+    downAxis[:, 1] = -1.0
+    leftArmAbduction = _vector_angle_degrees(leftHand - leftShoulder, downAxis)
+    rightArmAbduction = _vector_angle_degrees(rightHand - rightShoulder, downAxis)
+
+    bodyHeight = max(float(bodyHeight), 1e-3)
+    staticBody = (
+        (rootHorizontalSpeed < 0.05 * bodyHeight) &
+        (motionEnergy < 0.35 * bodyHeight) &
+        (upperBodyEnergy < 0.20 * bodyHeight)
+    )
+    armsStraight = (leftElbowAngle > 150.0) & (rightElbowAngle > 150.0)
+    armsSymmetric = np.abs(leftArmAbduction - rightArmAbduction) < 15.0
+    leftWristNearShoulder = np.abs(leftHand[:, 1] - leftShoulder[:, 1]) < 0.10 * bodyHeight
+    rightWristNearShoulder = np.abs(rightHand[:, 1] - rightShoulder[:, 1]) < 0.10 * bodyHeight
+    leftWristBelowShoulder = leftHand[:, 1] < leftShoulder[:, 1] - 0.05 * bodyHeight
+    rightWristBelowShoulder = rightHand[:, 1] < rightShoulder[:, 1] - 0.05 * bodyHeight
+    leftWristAboveHips = leftHand[:, 1] > hips[:, 1] - 0.15 * bodyHeight
+    rightWristAboveHips = rightHand[:, 1] > hips[:, 1] - 0.15 * bodyHeight
+
+    tPoseMask = (
+        staticBody &
+        armsStraight &
+        armsSymmetric &
+        (leftArmAbduction > 75.0) &
+        (rightArmAbduction > 75.0) &
+        leftWristNearShoulder &
+        rightWristNearShoulder
+    )
+    aPoseMask = (
+        staticBody &
+        armsStraight &
+        armsSymmetric &
+        (leftArmAbduction > 30.0) &
+        (rightArmAbduction > 30.0) &
+        (leftArmAbduction < 75.0) &
+        (rightArmAbduction < 75.0) &
+        leftWristBelowShoulder &
+        rightWristBelowShoulder &
+        leftWristAboveHips &
+        rightWristAboveHips
+    )
+
+    minFrames = max(6, int(round(0.20 * 60.0)))
+    tPoseMask = _keep_mask_segments_longer_than(tPoseMask, minFrames)
+    aPoseMask = _keep_mask_segments_longer_than(aPoseMask, minFrames)
+    calibrationPoseMask = (tPoseMask | aPoseMask).astype(np.float32)
+
+    return {
+        "t_pose_mask": tPoseMask.astype(np.float32),
+        "a_pose_mask": aPoseMask.astype(np.float32),
+        "calibration_pose_mask": calibrationPoseMask.astype(np.float32),
+        "left_elbow_angle": leftElbowAngle.astype(np.float32),
+        "right_elbow_angle": rightElbowAngle.astype(np.float32),
+        "left_arm_abduction": leftArmAbduction.astype(np.float32),
+        "right_arm_abduction": rightArmAbduction.astype(np.float32),
+    }
+
+
 def BuildLabelFeatureSource(
     clipNameOrPath: str,
     globalPositions,
@@ -452,13 +771,12 @@ def BuildLabelFeatureSource(
     jointNames=None,
 ):
     clipName = NormalizeClipName(clipNameOrPath)
-    clipPrior = GetClipPriorFromName(clipName)
-    candidateLabels = GetCandidateLabelsFromPrior(clipPrior)
 
     globalPositions = np.asarray(globalPositions, dtype=np.float32)
     rootPositions = np.asarray(rootTrajectorySource["positions"], dtype=np.float32)
     rootVelocities = np.asarray(rootTrajectorySource["velocities"], dtype=np.float32)
     rootDirections = np.asarray(rootTrajectorySource["directions"], dtype=np.float32)
+    globalVelocities = np.asarray(poseSource["global_velocities"], dtype=np.float32)
     dt = float(rootTrajectorySource.get("dt", 1.0 / 60.0))
 
     frameCount = int(len(rootPositions))
@@ -476,6 +794,7 @@ def BuildLabelFeatureSource(
         rootHeightAboveGround = (referenceRootPositions[:, 1] - terrainHeights).astype(np.float32)
     else:
         rootHeightAboveGround = np.zeros((0,), dtype=np.float32)
+    hipsY = rootHeightAboveGround.copy()
 
     contactMasks = _resolve_contact_masks(contactData)
     if contactMasks["contact_fraction"] is None:
@@ -488,14 +807,58 @@ def BuildLabelFeatureSource(
         rightContact = np.asarray(contactMasks["right_contact"], dtype=np.float32)
 
     motionEnergy, upperBodyEnergy = _compute_motion_energy(poseSource, jointNames=jointNames)
-    tPoseMask = _compute_t_pose_mask(globalPositions, rootDirections, jointNames=jointNames)
+    leftFootFeatures = _compute_side_contact_features(globalPositions, globalVelocities, terrainProvider, jointNames, "Left")
+    rightFootFeatures = _compute_side_contact_features(globalPositions, globalVelocities, terrainProvider, jointNames, "Right")
+    groundedMask = np.maximum(leftContact, rightContact) > 0.5
+    airborneMask = ~groundedMask
+    localFlightRatio = _sliding_mean(airborneMask.astype(np.float32), DEFAULT_FLIGHT_RATIO_WINDOW)
+    bodyHeight = _estimate_body_height(globalPositions, terrainHeights, rootHeightAboveGround, jointNames=jointNames)
+    standingHipsHeight = _estimate_standing_hips_height(
+        rootHeightAboveGround,
+        groundedMask,
+        rootHorizontalSpeed,
+        motionEnergy,
+    )
+    groundY = _estimate_ground_height(leftFootFeatures["height"], rightFootFeatures["height"])
+    torsoHeight = _compute_torso_height(globalPositions, jointNames=jointNames)
     standingHeight = _estimate_standing_height(rootHeightAboveGround)
     lowHeightThreshold = _estimate_low_height_threshold(standingHeight)
+    standingTorsoHeight = _estimate_standing_height(torsoHeight)
+    calibrationFeatures = _compute_calibration_pose_masks(
+        globalPositions,
+        jointNames,
+        bodyHeight,
+        rootHorizontalSpeed,
+        motionEnergy,
+        upperBodyEnergy,
+    )
+
+    leftHipIndex = _find_joint_index(jointNames, "LeftUpLeg")
+    leftKneeIndex = _find_joint_index(jointNames, "LeftLeg")
+    leftAnkleIndex = _find_joint_index(jointNames, "LeftFoot")
+    rightHipIndex = _find_joint_index(jointNames, "RightUpLeg")
+    rightKneeIndex = _find_joint_index(jointNames, "RightLeg")
+    rightAnkleIndex = _find_joint_index(jointNames, "RightFoot")
+    if None in (leftHipIndex, leftKneeIndex, leftAnkleIndex):
+        leftKneeAngle = np.full((frameCount,), 180.0, dtype=np.float32)
+    else:
+        leftKneeAngle = _joint_angle_degrees(
+            globalPositions[:, leftHipIndex],
+            globalPositions[:, leftKneeIndex],
+            globalPositions[:, leftAnkleIndex],
+        ).astype(np.float32)
+    if None in (rightHipIndex, rightKneeIndex, rightAnkleIndex):
+        rightKneeAngle = np.full((frameCount,), 180.0, dtype=np.float32)
+    else:
+        rightKneeAngle = _joint_angle_degrees(
+            globalPositions[:, rightHipIndex],
+            globalPositions[:, rightKneeIndex],
+            globalPositions[:, rightAnkleIndex],
+        ).astype(np.float32)
+    kneeFlexion = (180.0 - 0.5 * (leftKneeAngle + rightKneeAngle)).astype(np.float32)
 
     return {
         "clip_name": clipName,
-        "clip_prior": clipPrior,
-        "candidate_labels": candidateLabels,
         "frame_count": frameCount,
         "dt": dt,
         "root_positions": rootPositions,
@@ -504,124 +867,592 @@ def BuildLabelFeatureSource(
         "root_horizontal_speed": rootHorizontalSpeed,
         "root_vertical_speed": rootVerticalSpeed,
         "root_yaw_rate": rootYawRate,
+        "body_height": float(bodyHeight),
+        "ground_y": float(groundY),
+        "hips_y": hipsY,
+        "standing_hips_height": float(standingHipsHeight),
         "root_height_above_ground": rootHeightAboveGround,
         "standing_height": float(standingHeight),
         "low_height_threshold": float(lowHeightThreshold),
         "left_contact": leftContact,
         "right_contact": rightContact,
         "contact_fraction": contactFraction,
+        "grounded": groundedMask.astype(np.float32),
+        "airborne": airborneMask.astype(np.float32),
+        "local_flight_ratio": localFlightRatio.astype(np.float32),
+        "left_foot_height": leftFootFeatures["height"],
+        "right_foot_height": rightFootFeatures["height"],
+        "left_foot_speed_xy": leftFootFeatures["speed_xy"],
+        "right_foot_speed_xy": rightFootFeatures["speed_xy"],
         "motion_energy": motionEnergy,
         "upper_body_energy": upperBodyEnergy,
-        "t_pose_mask": tPoseMask,
+        "t_pose_mask": calibrationFeatures["t_pose_mask"],
+        "a_pose_mask": calibrationFeatures["a_pose_mask"],
+        "calibration_pose_mask": calibrationFeatures["calibration_pose_mask"],
+        "left_elbow_angle": calibrationFeatures["left_elbow_angle"],
+        "right_elbow_angle": calibrationFeatures["right_elbow_angle"],
+        "left_arm_abduction": calibrationFeatures["left_arm_abduction"],
+        "right_arm_abduction": calibrationFeatures["right_arm_abduction"],
+        "left_knee_angle": leftKneeAngle,
+        "right_knee_angle": rightKneeAngle,
+        "knee_flexion": kneeFlexion,
+        "torso_height": torsoHeight,
+        "standing_torso_height": float(standingTorsoHeight),
         "terrain_heights": terrainHeights,
     }
 
 
-def BuildAutoLabelScores(featureSource) -> np.ndarray:
-    frameCount = int(featureSource["frame_count"])
+def _iter_true_segments(mask):
+    mask = np.asarray(mask, dtype=bool)
+    start = None
+    for frameIndex, active in enumerate(mask):
+        if active and start is None:
+            start = frameIndex
+        elif not active and start is not None:
+            yield start, frameIndex - 1
+            start = None
+    if start is not None:
+        yield start, len(mask) - 1
+
+
+def _dilate_mask(mask, preFrames=0, postFrames=0):
+    mask = np.asarray(mask, dtype=bool)
+    if len(mask) == 0:
+        return mask.copy()
+
+    result = np.zeros_like(mask, dtype=bool)
+    for startFrame, endFrame in _iter_true_segments(mask):
+        startFrame = max(0, int(startFrame) - int(preFrames))
+        endFrame = min(len(mask) - 1, int(endFrame) + int(postFrames))
+        result[startFrame:endFrame + 1] = True
+    return result
+
+
+def _estimate_run_speed_threshold(speedValues, defaultThreshold=RUN_SPEED_THRESHOLD):
+    speedValues = np.asarray(speedValues, dtype=np.float32).reshape(-1)
+    speedValues = speedValues[np.isfinite(speedValues)]
+    if speedValues.size < 32:
+        return float(defaultThreshold)
+
+    lowCenter = float(np.percentile(speedValues, 35))
+    highCenter = float(np.percentile(speedValues, 75))
+    if highCenter - lowCenter < 1e-4:
+        return float(max(defaultThreshold, np.percentile(speedValues, 75)))
+
+    for _ in range(8):
+        lowMask = np.abs(speedValues - lowCenter) <= np.abs(speedValues - highCenter)
+        highMask = ~lowMask
+        if not np.any(lowMask) or not np.any(highMask):
+            break
+        lowCenter = float(np.mean(speedValues[lowMask]))
+        highCenter = float(np.mean(speedValues[highMask]))
+
+    if highCenter < lowCenter:
+        lowCenter, highCenter = highCenter, lowCenter
+    if highCenter - lowCenter < 0.10:
+        return float(max(defaultThreshold, np.percentile(speedValues, 80)))
+    return float(max(defaultThreshold, 0.5 * (lowCenter + highCenter)))
+
+
+def _compute_step_like_signal(leftContact, rightContact):
+    leftContact = np.asarray(leftContact, dtype=np.float32)
+    rightContact = np.asarray(rightContact, dtype=np.float32)
+    contactBalance = np.abs(leftContact - rightContact).astype(np.float32)
+    return _sliding_mean(contactBalance, windowSize=9)
+
+
+def _labels_to_scores(labels, confidence):
+    labels = np.asarray(labels, dtype=object)
+    confidence = np.asarray(confidence, dtype=np.float32).reshape(-1)
+    frameCount = len(labels)
     scores = np.zeros((frameCount, len(ACTION_LABELS)), dtype=np.float32)
-    if frameCount == 0:
-        return scores
+    transitionIndex = LABEL_TO_INDEX[LABEL_TRANSITION]
+    otherIndex = LABEL_TO_INDEX[LABEL_OTHER]
 
-    clipPrior = featureSource["clip_prior"]
-    candidateLabels = set(featureSource["candidate_labels"])
-    speed = np.asarray(featureSource["root_horizontal_speed"], dtype=np.float32)
+    for frameIndex, label in enumerate(labels):
+        label = _remap_legacy_label(label)
+        if label not in LABEL_TO_INDEX:
+            label = LABEL_OTHER
+        primary = 0.55 + 0.45 * float(np.clip(confidence[frameIndex], 0.0, 1.0))
+        secondary = max(0.0, 1.0 - primary)
+        scores[frameIndex, LABEL_TO_INDEX[label]] = primary
+        if label != LABEL_OTHER:
+            scores[frameIndex, otherIndex] = max(scores[frameIndex, otherIndex], secondary)
+        scores[frameIndex, transitionIndex] = 0.05
+
+    return scores.astype(np.float32)
+
+
+def _build_segment_support(labels):
+    labels = np.asarray(labels, dtype=object)
+    support = np.zeros((len(labels),), dtype=np.float32)
+    if len(labels) == 0:
+        return support
+
+    for segment in _labels_to_segments(labels, source="auto"):
+        segmentLength = segment.end_frame - segment.start_frame + 1
+        segmentSupport = np.clip((float(segmentLength) - 3.0) / 24.0, 0.0, 1.0)
+        support[segment.start_frame:segment.end_frame + 1] = segmentSupport
+    return support.astype(np.float32)
+
+
+def _postprocess_auto_confidence(labels, rawLabels, rawConfidence, scoreMargins):
+    labels = np.asarray(labels, dtype=object)
+    rawLabels = np.asarray(rawLabels, dtype=object)
+    rawConfidence = np.asarray(rawConfidence, dtype=np.float32).reshape(-1)
+    if len(labels) == 0:
+        return np.zeros((0,), dtype=np.float32)
+
+    scoreMargins = np.asarray(scoreMargins, dtype=np.float32).reshape(-1)
+    segmentSupport = _build_segment_support(labels)
+    marginSupport = np.ones((len(labels),), dtype=np.float32)
+    finiteMask = np.isfinite(scoreMargins)
+    if np.any(finiteMask):
+        marginSupport[finiteMask] = np.clip(
+            1.0 - scoreMargins[finiteMask] / max(float(DEFAULT_TRANSITION_MAX_SCORE_MARGIN), 1e-6),
+            0.0,
+            1.0,
+        )
+
+    confidence = np.zeros((len(labels),), dtype=np.float32)
+    for frameIndex, label in enumerate(labels):
+        if label == rawLabels[frameIndex]:
+            confidence[frameIndex] = float(rawConfidence[frameIndex])
+            continue
+
+        if label == LABEL_TRANSITION:
+            confidence[frameIndex] = (
+                0.35 +
+                0.20 * float(segmentSupport[frameIndex]) +
+                0.25 * float(marginSupport[frameIndex])
+            )
+        else:
+            confidence[frameIndex] = (
+                0.42 +
+                0.18 * float(segmentSupport[frameIndex]) +
+                0.20 * float(marginSupport[frameIndex])
+            )
+
+    return np.clip(confidence, 0.0, 1.0).astype(np.float32)
+
+
+def _detect_calibration_pose(featureSource):
+    mask = np.asarray(featureSource.get("calibration_pose_mask", np.zeros((featureSource["frame_count"],), dtype=np.float32)), dtype=np.float32) > 0.5
+    confidence = np.zeros((featureSource["frame_count"],), dtype=np.float32)
+    confidence[mask] = 0.95
+    return mask.astype(bool), confidence
+
+
+def _scan_mask_boundary(frameCount, boundaryFrame, step, maxFrames, allowMask):
+    frameIndex = int(boundaryFrame)
+    allowMask = np.asarray(allowMask, dtype=bool)
+    for _ in range(max(0, int(maxFrames))):
+        nextIndex = frameIndex + int(step)
+        if nextIndex < 0 or nextIndex >= int(frameCount):
+            break
+        if not allowMask[nextIndex]:
+            break
+        frameIndex = nextIndex
+    return int(frameIndex)
+
+
+def _detect_jump(featureSource, excludeMask, params=None):
+    params = CoerceLabelAutoParams(params)
+    frameCount = int(featureSource["frame_count"])
+    dt = float(featureSource["dt"])
+    fps = max(1, int(round(1.0 / max(dt, 1e-6))))
+    bodyHeight = max(float(featureSource.get("body_height", 1.0)), 1e-3)
+    airborne = np.asarray(featureSource.get("airborne", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32) > 0.5
     verticalSpeed = np.asarray(featureSource["root_vertical_speed"], dtype=np.float32)
-    height = np.asarray(featureSource["root_height_above_ground"], dtype=np.float32)
-    lowHeightThreshold = float(featureSource["low_height_threshold"])
-    standingHeight = float(featureSource["standing_height"])
+    hipsY = np.asarray(featureSource.get("hips_y", featureSource["root_height_above_ground"]), dtype=np.float32)
     contactFraction = np.asarray(featureSource["contact_fraction"], dtype=np.float32)
-    leftContact = np.asarray(featureSource["left_contact"], dtype=np.float32)
-    rightContact = np.asarray(featureSource["right_contact"], dtype=np.float32)
-    motionEnergy = np.asarray(featureSource["motion_energy"], dtype=np.float32)
-    upperBodyEnergy = np.asarray(featureSource["upper_body_energy"], dtype=np.float32)
-    tPoseMask = np.asarray(featureSource.get("t_pose_mask", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    localFlightRatio = np.asarray(featureSource.get("local_flight_ratio", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    speed = np.asarray(featureSource["root_horizontal_speed"], dtype=np.float32)
 
-    noContact = 1.0 - np.clip(np.maximum(leftContact, rightContact), 0.0, 1.0)
-    doubleContact = np.minimum(leftContact, rightContact)
-    lowHeight = _score_less(height, lowHeightThreshold, max(0.1 * standingHeight, 0.05))
-    highHeight = _score_greater(height, 0.9 * standingHeight, max(0.1 * standingHeight, 0.05))
-    rising = _score_greater(verticalSpeed, 0.15, 0.35)
-    fallingVelocity = _score_less(verticalSpeed, -0.2, 0.4)
-    lowVerticalMotion = _score_less(np.abs(verticalSpeed), 0.16, 0.24)
-    idleSpeed = _score_less(speed, IDLE_SPEED_THRESHOLD, 0.12)
-    walkSpeed = _score_range(speed, WALK_SPEED_LOW, WALK_SPEED_HIGH)
-    runSpeed = _score_greater(speed, RUN_SPEED_THRESHOLD, RUN_SPEED_SCALE)
-    lowGroundSpeed = _score_less(speed, 0.8, 0.7)
-    lowEnergy = _score_less(motionEnergy, 0.55, 0.35)
-    upperBodyDominance = np.clip(_safe_normalize(upperBodyEnergy) - 0.5 * _safe_normalize(speed), 0.0, 1.0)
+    minAirFrames = max(4, _seconds_to_frames(dt, params.jump_min_air_seconds))
+    preFrames = max(4, _seconds_to_frames(dt, params.jump_pre_seconds))
+    postFrames = max(6, _seconds_to_frames(dt, params.jump_post_seconds))
+    scanFrames = max(4, _seconds_to_frames(dt, params.jump_scan_seconds))
+    jumpVyThreshold = float(params.jump_vy_body_ratio) * bodyHeight
+    jumpLiftThreshold = float(params.jump_lift_body_ratio) * bodyHeight
+    settleVyThreshold = 0.18 * bodyHeight
 
-    scores[:, LABEL_TO_INDEX[LABEL_IDLE]] = (
-        1.4 * idleSpeed +
-        0.8 * lowEnergy +
-        0.6 * doubleContact
-    ) * (1.0 - np.clip(tPoseMask, 0.0, 1.0))
-    scores[:, LABEL_TO_INDEX[LABEL_WALK]] = (
-        1.4 * walkSpeed +
-        0.7 * contactFraction +
-        0.2 * _score_less(np.abs(verticalSpeed), 0.2, 0.2)
-    )
-    scores[:, LABEL_TO_INDEX[LABEL_RUN]] = (
-        1.6 * runSpeed +
-        0.4 * _score_less(contactFraction, 0.8, 0.5) +
-        0.3 * _score_greater(motionEnergy, 0.8, 0.6)
-    )
-    scores[:, LABEL_TO_INDEX[LABEL_JUMP]] = (
-        1.5 * noContact +
-        0.9 * np.maximum(rising, highHeight) +
-        0.3 * _score_greater(np.abs(verticalSpeed), 0.25, 0.35)
-    )
-    scores[:, LABEL_TO_INDEX[LABEL_FALL]] = (
-        1.4 * lowHeight +
-        1.0 * fallingVelocity +
-        0.3 * noContact
-    )
-    scores[:, LABEL_TO_INDEX[LABEL_GROUND]] = (
-        1.5 * lowHeight +
-        lowHeight * (
-            1.1 * lowVerticalMotion +
-            0.4 * contactFraction +
-            0.3 * lowGroundSpeed
+    coreMask = np.zeros((frameCount,), dtype=bool)
+    confidence = np.zeros((frameCount,), dtype=np.float32)
+
+    airborne = airborne & ~np.asarray(excludeMask, dtype=bool)
+    for startFrame, endFrame in _iter_true_segments(airborne):
+        segmentLength = endFrame - startFrame + 1
+        if segmentLength < minAirFrames:
+            continue
+        baselineStart = max(0, startFrame - preFrames)
+        baselineEnd = max(baselineStart + 1, startFrame)
+        baselineHeight = float(np.percentile(hipsY[baselineStart:baselineEnd], 50))
+        peakHeight = float(np.max(hipsY[startFrame:endFrame + 1]))
+        peakVy = float(np.max(verticalSpeed[baselineStart:min(frameCount, endFrame + postFrames + 1)]))
+        hipsLift = peakHeight - baselineHeight
+        medianSpeed = float(np.median(speed[startFrame:endFrame + 1]))
+
+        if peakVy < jumpVyThreshold and hipsLift < jumpLiftThreshold:
+            continue
+        if (
+            medianSpeed >= float(params.run_speed_threshold) + 0.30 and
+            hipsLift < 0.12 * bodyHeight and
+            peakVy < 0.65 * bodyHeight
+        ):
+            continue
+
+        expandedStart = max(0, startFrame - preFrames)
+        expandedEnd = min(frameCount - 1, endFrame + postFrames)
+        backwardAllow = (
+            (contactFraction <= 0.75) &
+            ((localFlightRatio >= 0.02) | (verticalSpeed >= -0.10 * bodyHeight))
+        ) & ~np.asarray(excludeMask, dtype=bool)
+        forwardAllow = (
+            (contactFraction <= 0.75) |
+            (localFlightRatio >= 0.04) |
+            (np.abs(verticalSpeed) >= settleVyThreshold)
+        ) & ~np.asarray(excludeMask, dtype=bool)
+        expandedStart = _scan_mask_boundary(frameCount, expandedStart, -1, scanFrames, backwardAllow)
+        expandedEnd = _scan_mask_boundary(frameCount, expandedEnd, 1, scanFrames, forwardAllow)
+        coreMask[expandedStart:expandedEnd + 1] = True
+        segmentConfidence = np.clip(
+            0.55 +
+            0.25 * min(1.0, segmentLength / max(float(minAirFrames * 2), 1.0)) +
+            0.20 * max(peakVy / max(jumpVyThreshold, 1e-6), hipsLift / max(jumpLiftThreshold, 1e-6)),
+            0.0,
+            1.0,
+        )
+        confidence[expandedStart:expandedEnd + 1] = np.maximum(confidence[expandedStart:expandedEnd + 1], segmentConfidence)
+
+    coreMask = _close_mask_gaps(coreMask, _seconds_to_frames(dt, params.jump_gap_seconds, minimum=0))
+    coreMask = _keep_mask_segments_longer_than(coreMask, _seconds_to_frames(dt, DEFAULT_JUMP_MIN_SECONDS))
+    return coreMask.astype(bool), confidence.astype(np.float32)
+
+
+def _detect_crouch(featureSource, excludeMask, params=None):
+    params = CoerceLabelAutoParams(params)
+    frameCount = int(featureSource["frame_count"])
+    dt = float(featureSource["dt"])
+    grounded = np.asarray(featureSource.get("grounded", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32) > 0.5
+    verticalSpeed = np.asarray(featureSource["root_vertical_speed"], dtype=np.float32)
+    torsoHeight = np.asarray(featureSource.get("torso_height", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    standingTorsoHeight = max(float(featureSource.get("standing_torso_height", 1.0)), 1e-3)
+    kneeFlexion = np.asarray(featureSource.get("knee_flexion", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    contactFraction = np.asarray(featureSource["contact_fraction"], dtype=np.float32)
+    localFlightRatio = np.asarray(featureSource.get("local_flight_ratio", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    speed = np.asarray(featureSource["root_horizontal_speed"], dtype=np.float32)
+
+    torsoRatio = torsoHeight / max(standingTorsoHeight, 1e-6)
+    deepTorsoCrouch = torsoRatio < float(params.crouch_deep_torso_ratio)
+    locomotionCrouch = torsoRatio < float(params.crouch_locomotion_torso_ratio)
+    stableVertical = np.abs(verticalSpeed) < 0.24
+    strongSupport = contactFraction >= 0.50
+    lowFlight = localFlightRatio < 0.06
+    crouchSpeed = speed < float(params.crouch_speed_max)
+
+    mask = (
+        grounded &
+        stableVertical &
+        strongSupport &
+        lowFlight &
+        crouchSpeed &
+        (
+            deepTorsoCrouch |
+            (locomotionCrouch & (kneeFlexion > float(params.crouch_knee_flexion_min)))
         )
     )
-    scores[:, LABEL_TO_INDEX[LABEL_GET_UP]] = (
-        1.4 * lowHeight +
-        1.0 * rising +
-        0.5 * contactFraction
+    mask &= ~np.asarray(excludeMask, dtype=bool)
+    mask = _close_mask_gaps(mask, _seconds_to_frames(dt, params.crouch_gap_seconds, minimum=0))
+    mask = _keep_mask_segments_longer_than(mask, _seconds_to_frames(dt, params.crouch_min_seconds))
+
+    confidence = np.zeros((frameCount,), dtype=np.float32)
+    kneeSupport = np.clip((kneeFlexion - 45.0) / 20.0, 0.0, 1.0)
+    torsoSupport = np.clip((float(params.crouch_locomotion_torso_ratio) + 0.01 - torsoRatio) / 0.12, 0.0, 1.0)
+    speedSupport = np.clip((float(params.crouch_speed_max) - speed) / max(float(params.crouch_speed_max), 1e-6), 0.0, 1.0)
+    confidence[mask] = np.clip(
+        0.55 +
+        0.22 * torsoSupport[mask] +
+        0.12 * kneeSupport[mask] +
+        0.08 * speedSupport[mask],
+        0.0,
+        1.0,
     )
-    scores[:, LABEL_TO_INDEX[LABEL_OTHER]] = (
-        0.4 +
-        0.8 * upperBodyDominance +
-        0.2 * _score_greater(motionEnergy, 0.9, 0.7)
+    return mask.astype(bool), confidence.astype(np.float32)
+
+
+def _detect_idle(featureSource, excludeMask):
+    frameCount = int(featureSource["frame_count"])
+    dt = float(featureSource["dt"])
+    grounded = np.asarray(featureSource.get("grounded", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32) > 0.5
+    speed = np.asarray(featureSource["root_horizontal_speed"], dtype=np.float32)
+    motionEnergy = np.asarray(featureSource["motion_energy"], dtype=np.float32)
+    hipsY = np.asarray(featureSource.get("hips_y", featureSource["root_height_above_ground"]), dtype=np.float32)
+    standingHipsHeight = max(float(featureSource.get("standing_hips_height", featureSource.get("standing_height", 1.0))), 1e-3)
+
+    groundedSpeeds = speed[grounded]
+    groundedEnergy = motionEnergy[grounded]
+    idleSpeedThreshold = float(np.percentile(groundedSpeeds, 18)) if groundedSpeeds.size > 0 else IDLE_SPEED_THRESHOLD
+    idleEnergyThreshold = float(np.percentile(groundedEnergy, 22)) if groundedEnergy.size > 0 else 0.55
+
+    idleMask = (
+        grounded &
+        (speed <= idleSpeedThreshold) &
+        (motionEnergy <= idleEnergyThreshold) &
+        (hipsY > 0.84 * standingHipsHeight)
     )
-    scores[:, LABEL_TO_INDEX[LABEL_TRANSITION]] = 0.1
+    idleMask &= ~np.asarray(excludeMask, dtype=bool)
+    idleMask = _keep_mask_segments_longer_than(idleMask, _seconds_to_frames(dt, DEFAULT_IDLE_MIN_SECONDS))
 
-    if clipPrior == CLIP_PRIOR_WALK:
-        scores[:, LABEL_TO_INDEX[LABEL_WALK]] += 0.35
-        scores[:, LABEL_TO_INDEX[LABEL_OTHER]] -= 0.15
-    elif clipPrior == CLIP_PRIOR_RUN:
-        scores[:, LABEL_TO_INDEX[LABEL_RUN]] += 0.3
-        scores[:, LABEL_TO_INDEX[LABEL_WALK]] += 0.25
-    elif clipPrior == CLIP_PRIOR_JUMP:
-        scores[:, LABEL_TO_INDEX[LABEL_JUMP]] += 0.6
-    elif clipPrior == CLIP_PRIOR_FALL_RECOVERY:
-        scores[:, LABEL_TO_INDEX[LABEL_FALL]] += 0.55
-        scores[:, LABEL_TO_INDEX[LABEL_GROUND]] += 0.35
-        scores[:, LABEL_TO_INDEX[LABEL_GET_UP]] += 0.55
-        scores[:, LABEL_TO_INDEX[LABEL_IDLE]] -= 0.2
-        scores[:, LABEL_TO_INDEX[LABEL_WALK]] -= 0.2
-        scores[:, LABEL_TO_INDEX[LABEL_RUN]] -= 0.2
-    elif clipPrior == CLIP_PRIOR_GROUND:
-        scores[:, LABEL_TO_INDEX[LABEL_GROUND]] += 0.75
-        scores[:, LABEL_TO_INDEX[LABEL_FALL]] += 0.15
-        scores[:, LABEL_TO_INDEX[LABEL_GET_UP]] += 0.15
-    elif clipPrior == CLIP_PRIOR_OTHER:
-        scores[:, LABEL_TO_INDEX[LABEL_OTHER]] += 0.5
+    confidence = np.zeros((frameCount,), dtype=np.float32)
+    speedSupport = np.clip((idleSpeedThreshold - speed) / max(idleSpeedThreshold, 1e-6), 0.0, 1.0)
+    energySupport = np.clip((idleEnergyThreshold - motionEnergy) / max(idleEnergyThreshold, 1e-6), 0.0, 1.0)
+    confidence[idleMask] = np.clip(0.55 + 0.25 * speedSupport[idleMask] + 0.20 * energySupport[idleMask], 0.0, 1.0)
+    return idleMask.astype(bool), confidence
 
-    for label, index in LABEL_TO_INDEX.items():
-        if label not in candidateLabels and label != LABEL_TRANSITION:
-            scores[:, index] -= 0.75
 
+def _detect_walk_run(featureSource, excludeMask, params=None):
+    params = CoerceLabelAutoParams(params)
+    frameCount = int(featureSource["frame_count"])
+    dt = float(featureSource["dt"])
+    fps = max(1, int(round(1.0 / max(dt, 1e-6))))
+    speed = np.asarray(featureSource["root_horizontal_speed"], dtype=np.float32)
+    leftContact = np.asarray(featureSource["left_contact"], dtype=np.float32)
+    rightContact = np.asarray(featureSource["right_contact"], dtype=np.float32)
+    contactFraction = np.asarray(featureSource["contact_fraction"], dtype=np.float32)
+    localFlightRatio = np.asarray(featureSource.get("local_flight_ratio", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    motionEnergy = np.asarray(featureSource["motion_energy"], dtype=np.float32)
+
+    stepSignal = _compute_step_like_signal(leftContact, rightContact)
+    walkMinSpeed = max(0.12, float(np.percentile(speed, float(params.walk_min_speed_percentile))))
+    locomotion = (speed >= walkMinSpeed) & (stepSignal >= 0.18)
+    locomotion &= ~np.asarray(excludeMask, dtype=bool)
+
+    runThreshold = _estimate_run_speed_threshold(speed[locomotion], defaultThreshold=float(params.run_speed_threshold))
+    runDominantMotion = (
+        float(np.percentile(speed, 65)) >= float(params.run_speed_threshold) + 0.20 and
+        float(np.percentile(localFlightRatio, 60)) >= 0.12 and
+        float(np.percentile(contactFraction, 50)) <= 0.50
+    )
+    if runDominantMotion:
+        runThreshold = min(runThreshold, max(1.10, float(np.percentile(speed, 25))))
+    locomotionEnergy = motionEnergy[locomotion]
+    highEnergyThreshold = (
+        float(np.percentile(locomotionEnergy, 70))
+        if locomotionEnergy.size > 0 else
+        float(np.percentile(motionEnergy, 70))
+    )
+    runSpeedMargin = max(0.10, float(params.run_speed_margin_ratio) * float(runThreshold))
+    walkSupport = (contactFraction >= 0.25) & (localFlightRatio <= 0.15)
+    lowSupport = contactFraction <= float(params.run_low_contact_max)
+    sustainedFlight = localFlightRatio >= float(params.run_flight_threshold)
+    runBase = (speed >= runThreshold) & ~np.asarray(excludeMask, dtype=bool)
+    airborneRun = runBase & sustainedFlight
+    lowContactRun = runBase & lowSupport & (speed >= (runThreshold + 0.30))
+    dominantRun = (
+        runDominantMotion &
+        (speed >= runThreshold) &
+        ((localFlightRatio >= 0.05) | (contactFraction <= 0.50) | (stepSignal >= 0.18))
+    )
+    strongRun = locomotion & (speed >= runThreshold) & (sustainedFlight | lowSupport)
+    fastRun = locomotion & (speed >= (runThreshold + runSpeedMargin)) & (motionEnergy >= highEnergyThreshold) & (contactFraction <= 0.5)
+    runMask = airborneRun | lowContactRun | dominantRun | strongRun | fastRun
+    walkMask = locomotion & ~runMask & walkSupport
+
+    walkMask = _close_mask_gaps(walkMask, _seconds_to_frames(dt, 0.05, minimum=0))
+    runMask = _close_mask_gaps(runMask, _seconds_to_frames(dt, 0.04, minimum=0))
+    walkMask = _keep_mask_segments_longer_than(walkMask, _seconds_to_frames(dt, DEFAULT_WALK_MIN_SECONDS))
+    runMask = _keep_mask_segments_longer_than(runMask, _seconds_to_frames(dt, DEFAULT_RUN_MIN_SECONDS))
+
+    walkConfidence = np.zeros((frameCount,), dtype=np.float32)
+    runConfidence = np.zeros((frameCount,), dtype=np.float32)
+    walkBand = np.clip((runThreshold - speed) / max(runThreshold - walkMinSpeed, 1e-6), 0.0, 1.0)
+    runBand = np.clip((speed - runThreshold) / max(runSpeedMargin, 1e-6), 0.0, 1.0)
+    stepSupport = np.clip((stepSignal - 0.18) / 0.25, 0.0, 1.0)
+    supportSupport = np.clip((contactFraction - 0.25) / 0.35, 0.0, 1.0)
+    flightSupport = np.clip((localFlightRatio - 0.10) / 0.18, 0.0, 1.0)
+    lowSupportScore = np.clip((0.35 - contactFraction) / 0.25, 0.0, 1.0)
+    motionEnergyMid = float(np.percentile(motionEnergy, 50))
+    motionEnergyHigh = float(np.percentile(motionEnergy, 85))
+    energySupport = np.clip((motionEnergy - motionEnergyMid) / max(motionEnergyHigh - motionEnergyMid, 1e-6), 0.0, 1.0)
+
+    walkConfidence[walkMask] = np.clip(
+        0.55 +
+        0.20 * walkBand[walkMask] +
+        0.15 * stepSupport[walkMask] +
+        0.10 * supportSupport[walkMask],
+        0.0,
+        1.0,
+    )
+    runConfidence[runMask] = np.clip(
+        0.55 +
+        0.18 * runBand[runMask] +
+        0.12 * flightSupport[runMask] +
+        0.10 * lowSupportScore[runMask] +
+        0.10 * energySupport[runMask],
+        0.0,
+        1.0,
+    )
+    return walkMask.astype(bool), runMask.astype(bool), walkConfidence, runConfidence
+
+
+def _refine_detector_labels(labels, confidence, featureSource, params=None):
+    params = CoerceLabelAutoParams(params)
+    labels = np.asarray(labels, dtype=object).copy()
+    confidence = np.asarray(confidence, dtype=np.float32).copy()
+    frameCount = len(labels)
+    if frameCount == 0:
+        return labels, confidence
+
+    dt = float(featureSource["dt"])
+    bodyHeight = max(float(featureSource.get("body_height", 1.0)), 1e-3)
+    speed = np.asarray(featureSource["root_horizontal_speed"], dtype=np.float32)
+    verticalSpeed = np.asarray(featureSource["root_vertical_speed"], dtype=np.float32)
+    contactFraction = np.asarray(featureSource["contact_fraction"], dtype=np.float32)
+    yawRate = np.abs(np.asarray(featureSource.get("root_yaw_rate", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32))
+    motionEnergy = np.asarray(featureSource.get("motion_energy", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    localFlightRatio = np.asarray(featureSource.get("local_flight_ratio", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    torsoHeight = np.asarray(featureSource.get("torso_height", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    standingTorsoHeight = max(float(featureSource.get("standing_torso_height", 1.0)), 1e-3)
+    torsoRatio = torsoHeight / max(standingTorsoHeight, 1e-6)
+    kneeFlexion = np.asarray(featureSource.get("knee_flexion", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+
+    crouchMask = labels == LABEL_CROUCH
+    jumpMask = labels == LABEL_JUMP
+    crouchProximity = _dilate_mask(crouchMask, preFrames=_seconds_to_frames(dt, 0.10, minimum=0), postFrames=_seconds_to_frames(dt, 0.10, minimum=0))
+    jumpProximity = _dilate_mask(jumpMask, preFrames=_seconds_to_frames(dt, 0.10, minimum=0), postFrames=_seconds_to_frames(dt, 0.14, minimum=0))
+
+    crouchContext = (
+        (torsoRatio < max(0.0, float(params.crouch_locomotion_torso_ratio) - 0.01)) &
+        (contactFraction >= 0.50) &
+        (localFlightRatio < 0.06) &
+        (np.abs(verticalSpeed) < 0.24) &
+        (speed < float(params.crouch_speed_max)) &
+        (kneeFlexion > max(0.0, float(params.crouch_knee_flexion_min) - 2.0))
+    )
+    promoteCrouch = crouchProximity & crouchContext & np.isin(labels, np.asarray([LABEL_WALK, LABEL_OTHER], dtype=object))
+    labels[promoteCrouch] = LABEL_CROUCH
+    confidence[promoteCrouch] = np.maximum(confidence[promoteCrouch], 0.72)
+
+    jumpContext = (
+        (contactFraction <= 0.50) |
+        (localFlightRatio >= 0.04) |
+        (np.abs(verticalSpeed) >= 0.18 * bodyHeight)
+    )
+    promoteJump = jumpProximity & jumpContext & np.isin(labels, np.asarray([LABEL_WALK, LABEL_RUN, LABEL_OTHER], dtype=object))
+    labels[promoteJump] = LABEL_JUMP
+    confidence[promoteJump] = np.maximum(confidence[promoteJump], 0.70)
+
+    walkMask = labels == LABEL_WALK
+    runMask = labels == LABEL_RUN
+    locomotionMask = walkMask | runMask
+    contextFrames = _seconds_to_frames(dt, float(params.turn_context_seconds), minimum=1)
+    locomotionProximity = _dilate_mask(locomotionMask, preFrames=contextFrames, postFrames=contextFrames)
+    walkProximity = _dilate_mask(walkMask, preFrames=contextFrames, postFrames=contextFrames)
+    runProximity = _dilate_mask(runMask, preFrames=contextFrames, postFrames=contextFrames)
+
+    if np.any(locomotionProximity):
+        energyReference = motionEnergy[locomotionProximity]
+    else:
+        energyReference = motionEnergy
+    energyThreshold = 0.0
+    if energyReference.size > 0:
+        energyThreshold = float(np.percentile(energyReference, 25))
+
+    turnContext = (
+        (yawRate >= float(params.turn_yaw_rate_threshold)) &
+        (speed >= float(params.turn_speed_min)) &
+        (motionEnergy >= energyThreshold) &
+        (contactFraction >= 0.20) &
+        (localFlightRatio < 0.20) &
+        (torsoRatio >= float(params.crouch_locomotion_torso_ratio) - 0.05)
+    )
+    turnCandidates = (
+        locomotionProximity &
+        turnContext &
+        np.isin(labels, np.asarray([LABEL_OTHER, LABEL_IDLE], dtype=object))
+    )
+    runTurns = (
+        turnCandidates &
+        runProximity &
+        (
+            (speed >= float(params.run_speed_threshold) - 0.20) |
+            (localFlightRatio >= float(params.run_flight_threshold))
+        )
+    )
+    walkTurns = turnCandidates & ~runTurns & (walkProximity | runProximity)
+    labels[walkTurns] = LABEL_WALK
+    labels[runTurns] = LABEL_RUN
+    confidence[turnCandidates] = np.maximum(confidence[turnCandidates], 0.66)
+
+    runMask = labels == LABEL_RUN
+    runProximity = _dilate_mask(
+        runMask,
+        preFrames=_seconds_to_frames(dt, 0.12, minimum=0),
+        postFrames=_seconds_to_frames(dt, 0.12, minimum=0),
+    )
+    runContext = (
+        (speed >= float(params.run_speed_threshold)) &
+        (
+            (localFlightRatio >= float(params.run_flight_threshold)) |
+            (contactFraction <= float(params.run_low_contact_max)) |
+            (speed >= float(params.run_speed_threshold) + 0.30)
+        )
+    )
+    promoteRun = runProximity & runContext & np.isin(labels, np.asarray([LABEL_WALK, LABEL_OTHER, LABEL_CROUCH], dtype=object))
+    labels[promoteRun] = LABEL_RUN
+    confidence[promoteRun] = np.maximum(confidence[promoteRun], 0.68)
+
+    return labels.astype(object), confidence.astype(np.float32)
+
+
+def BuildAutoLabelsFromMotion(featureSource, params=None):
+    params = CoerceLabelAutoParams(params)
+    frameCount = int(featureSource["frame_count"])
+    labels = np.full((frameCount,), LABEL_OTHER, dtype=object)
+    confidence = np.full((frameCount,), 0.55, dtype=np.float32)
+    if frameCount == 0:
+        return labels, _labels_to_scores(labels, confidence), confidence
+
+    calibrationMask, calibrationConfidence = _detect_calibration_pose(featureSource)
+    jumpMask, jumpConfidence = _detect_jump(featureSource, calibrationMask, params=params)
+    crouchMask, crouchConfidence = _detect_crouch(featureSource, calibrationMask | jumpMask, params=params)
+    idleMask, idleConfidence = _detect_idle(featureSource, calibrationMask | jumpMask | crouchMask)
+    walkMask, runMask, walkConfidence, runConfidence = _detect_walk_run(
+        featureSource,
+        calibrationMask | jumpMask | crouchMask | idleMask,
+        params=params,
+    )
+
+    labels[walkMask] = LABEL_WALK
+    confidence[walkMask] = walkConfidence[walkMask]
+
+    labels[runMask] = LABEL_RUN
+    confidence[runMask] = runConfidence[runMask]
+
+    labels[idleMask] = LABEL_IDLE
+    confidence[idleMask] = idleConfidence[idleMask]
+
+    labels[crouchMask] = LABEL_CROUCH
+    confidence[crouchMask] = crouchConfidence[crouchMask]
+
+    labels[jumpMask] = LABEL_JUMP
+    confidence[jumpMask] = jumpConfidence[jumpMask]
+
+    labels[calibrationMask] = LABEL_OTHER
+    confidence[calibrationMask] = np.maximum(confidence[calibrationMask], calibrationConfidence[calibrationMask])
+
+    labels, confidence = _refine_detector_labels(labels, confidence, featureSource, params=params)
+    scores = _labels_to_scores(labels, confidence)
+    return labels.astype(object), scores.astype(np.float32), confidence.astype(np.float32)
+
+
+def BuildAutoLabelScores(featureSource, params=None) -> np.ndarray:
+    params = CoerceLabelAutoParams(params)
+    labels, scores, confidence = BuildAutoLabelsFromMotion(featureSource, params=params)
+    featureSource["motion_rule_labels"] = np.asarray(labels, dtype=object)
+    featureSource["auto_confidence"] = np.asarray(confidence, dtype=np.float32)
+    featureSource["auto_params"] = params
     return scores.astype(np.float32)
 
 
@@ -691,7 +1522,23 @@ def GetDefaultAnnotationPath(clipNameOrPath: str, annotationsRoot="resources/ann
     return Path(annotationsRoot).joinpath(*clipParents, f"{clipStem}.json")
 
 
-def _merge_short_segments(labels, minSegmentLength=6):
+def _min_segment_length_for_label(label, defaultMinSegmentLength, dt=1.0 / 60.0):
+    label = str(label)
+    perLabelMinimums = {
+        LABEL_IDLE: _seconds_to_frames(dt, DEFAULT_IDLE_MIN_SECONDS),
+        LABEL_WALK: _seconds_to_frames(dt, DEFAULT_WALK_MIN_SECONDS),
+        LABEL_RUN: _seconds_to_frames(dt, DEFAULT_RUN_MIN_SECONDS),
+        LABEL_JUMP: _seconds_to_frames(dt, DEFAULT_JUMP_MIN_SECONDS),
+        LABEL_CROUCH: _seconds_to_frames(dt, DEFAULT_CROUCH_MIN_SECONDS),
+        LABEL_OTHER: _seconds_to_frames(dt, DEFAULT_OTHER_MIN_SECONDS),
+        LABEL_FALL: _seconds_to_frames(dt, DEFAULT_OTHER_MIN_SECONDS),
+        LABEL_GROUND: _seconds_to_frames(dt, DEFAULT_OTHER_MIN_SECONDS),
+        LABEL_GET_UP: _seconds_to_frames(dt, DEFAULT_OTHER_MIN_SECONDS),
+    }
+    return int(max(int(defaultMinSegmentLength), perLabelMinimums.get(label, int(defaultMinSegmentLength))))
+
+
+def _merge_short_segments(labels, minSegmentLength=6, dt=1.0 / 60.0):
     labels = np.asarray(labels, dtype=object)
     if len(labels) == 0 or minSegmentLength <= 1:
         return labels.copy()
@@ -704,7 +1551,8 @@ def _merge_short_segments(labels, minSegmentLength=6):
         segments = _labels_to_segments(merged, source="auto")
         for segmentIndex, segment in enumerate(segments):
             segmentLength = segment.end_frame - segment.start_frame + 1
-            if segmentLength >= minSegmentLength:
+            requiredLength = _min_segment_length_for_label(segment.label, minSegmentLength, dt=dt)
+            if segmentLength >= requiredLength:
                 continue
 
             leftLabel = segments[segmentIndex - 1].label if segmentIndex > 0 else None
@@ -733,7 +1581,13 @@ def _merge_short_segments(labels, minSegmentLength=6):
     return merged
 
 
-def _insert_transition_labels(labels, transitionFrames=DEFAULT_TRANSITION_FRAMES):
+def _insert_transition_labels(
+    labels,
+    transitionFrames=DEFAULT_TRANSITION_FRAMES,
+    scoreMargins=None,
+    minSegmentLength=DEFAULT_TRANSITION_MIN_SEGMENT_LENGTH,
+    maxScoreMargin=DEFAULT_TRANSITION_MAX_SCORE_MARGIN,
+):
     labels = np.asarray(labels, dtype=object)
     if len(labels) == 0 or transitionFrames <= 0:
         return labels.copy()
@@ -741,6 +1595,7 @@ def _insert_transition_labels(labels, transitionFrames=DEFAULT_TRANSITION_FRAMES
     result = labels.copy()
     halfWidth = max(1, int(transitionFrames) // 2)
     segments = _labels_to_segments(labels, source="auto")
+    scoreMargins = None if scoreMargins is None else np.asarray(scoreMargins, dtype=np.float32)
 
     for segmentIndex in range(len(segments) - 1):
         currentSegment = segments[segmentIndex]
@@ -752,6 +1607,17 @@ def _insert_transition_labels(labels, transitionFrames=DEFAULT_TRANSITION_FRAMES
 
         leftBudget = max(0, currentSegment.end_frame - currentSegment.start_frame + 1)
         rightBudget = max(0, nextSegment.end_frame - nextSegment.start_frame + 1)
+        if leftBudget < int(minSegmentLength) or rightBudget < int(minSegmentLength):
+            continue
+
+        if scoreMargins is not None:
+            boundaryMargin = min(
+                float(scoreMargins[currentSegment.end_frame]),
+                float(scoreMargins[nextSegment.start_frame]),
+            )
+            if boundaryMargin > float(maxScoreMargin):
+                continue
+
         leftCount = min(halfWidth, max(1, leftBudget // 3))
         rightCount = min(halfWidth, max(1, rightBudget // 3))
 
@@ -770,6 +1636,88 @@ def _ensure_manual_labels(labelResult: LabelModuleResult) -> np.ndarray:
     if labelResult.manual_labels is None or len(labelResult.manual_labels) != frameCount:
         labelResult.manual_labels = np.full((frameCount,), None, dtype=object)
     return labelResult.manual_labels
+
+
+def _clone_transition_overrides(transitionOverrides):
+    return [
+        {
+            "start_frame": int(override["start_frame"]),
+            "end_frame": int(override["end_frame"]),
+            "width": int(override["width"]),
+        }
+        for override in transitionOverrides
+    ]
+
+
+def _snapshot_annotation_state(labelResult: LabelModuleResult) -> dict:
+    manualLabels = _ensure_manual_labels(labelResult)
+    return {
+        "manual_labels": manualLabels.copy(),
+        "transition_overrides": _clone_transition_overrides(labelResult.transition_overrides),
+    }
+
+
+def _annotation_state_equal(leftSnapshot, rightSnapshot) -> bool:
+    return (
+        np.array_equal(
+            np.asarray(leftSnapshot["manual_labels"], dtype=object),
+            np.asarray(rightSnapshot["manual_labels"], dtype=object),
+        ) and
+        list(leftSnapshot["transition_overrides"]) == list(rightSnapshot["transition_overrides"])
+    )
+
+
+def _push_annotation_history(labelResult: LabelModuleResult) -> None:
+    snapshot = _snapshot_annotation_state(labelResult)
+    if labelResult.undo_stack and _annotation_state_equal(labelResult.undo_stack[-1], snapshot):
+        labelResult.redo_stack.clear()
+        return
+
+    labelResult.undo_stack.append(snapshot)
+    if len(labelResult.undo_stack) > MAX_LABEL_HISTORY:
+        labelResult.undo_stack = labelResult.undo_stack[-MAX_LABEL_HISTORY:]
+    labelResult.redo_stack.clear()
+
+
+def _restore_annotation_state(labelResult: LabelModuleResult, snapshot) -> LabelModuleResult:
+    manualLabels = _ensure_manual_labels(labelResult)
+    manualLabels[:] = np.asarray(snapshot["manual_labels"], dtype=object)
+    labelResult.transition_overrides = _clone_transition_overrides(snapshot["transition_overrides"])
+    return _rebuild_final_labels(labelResult)
+
+
+def CanUndoLabelEdit(labelResult: LabelModuleResult) -> bool:
+    return bool(labelResult.undo_stack)
+
+
+def CanRedoLabelEdit(labelResult: LabelModuleResult) -> bool:
+    return bool(labelResult.redo_stack)
+
+
+def UndoLabelEdit(labelResult: LabelModuleResult) -> bool:
+    if not labelResult.undo_stack:
+        return False
+
+    currentSnapshot = _snapshot_annotation_state(labelResult)
+    targetSnapshot = labelResult.undo_stack.pop()
+    labelResult.redo_stack.append(currentSnapshot)
+    if len(labelResult.redo_stack) > MAX_LABEL_HISTORY:
+        labelResult.redo_stack = labelResult.redo_stack[-MAX_LABEL_HISTORY:]
+    _restore_annotation_state(labelResult, targetSnapshot)
+    return True
+
+
+def RedoLabelEdit(labelResult: LabelModuleResult) -> bool:
+    if not labelResult.redo_stack:
+        return False
+
+    currentSnapshot = _snapshot_annotation_state(labelResult)
+    targetSnapshot = labelResult.redo_stack.pop()
+    labelResult.undo_stack.append(currentSnapshot)
+    if len(labelResult.undo_stack) > MAX_LABEL_HISTORY:
+        labelResult.undo_stack = labelResult.undo_stack[-MAX_LABEL_HISTORY:]
+    _restore_annotation_state(labelResult, targetSnapshot)
+    return True
 
 
 def _ease_cosine(alpha):
@@ -940,13 +1888,84 @@ def _rebuild_final_labels(labelResult: LabelModuleResult) -> LabelModuleResult:
     return labelResult
 
 
+def _segments_to_export_array(segments):
+    segmentDtype = np.dtype([
+        ("start_frame", np.int32),
+        ("end_frame", np.int32),
+        ("label", "U32"),
+    ])
+    exportArray = np.zeros((len(segments),), dtype=segmentDtype)
+    for segmentIndex, segment in enumerate(segments):
+        exportArray[segmentIndex] = (
+            int(segment.start_frame),
+            int(segment.end_frame),
+            str(segment.label),
+        )
+    return exportArray
+
+
+def _extract_public_soft_weights(softWeights):
+    softWeights = np.asarray(softWeights, dtype=np.float32)
+    if softWeights.ndim != 2:
+        raise ValueError("softWeights must be a 2D array.")
+    if softWeights.shape[0] == 0:
+        return np.zeros((0, len(TARGET_ACTION_LABELS)), dtype=np.float32)
+
+    targetIndices = np.asarray([LABEL_TO_INDEX[label] for label in TARGET_ACTION_LABELS], dtype=np.int32)
+    publicWeights = np.asarray(softWeights[:, targetIndices], dtype=np.float32).copy()
+    rowSums = np.sum(publicWeights, axis=1, keepdims=True)
+    zeroMask = rowSums[:, 0] <= 1e-8
+    if np.any(zeroMask):
+        publicWeights[zeroMask, :] = 0.0
+        publicWeights[zeroMask, TARGET_LABEL_TO_INDEX[LABEL_OTHER]] = 1.0
+        rowSums = np.sum(publicWeights, axis=1, keepdims=True)
+    publicWeights /= np.maximum(rowSums, 1e-8)
+    return publicWeights.astype(np.float32)
+
+
+def _collapse_labels_to_public(labels, internalSoftWeights=None):
+    labels = np.asarray(labels, dtype=object)
+    if len(labels) == 0:
+        return np.asarray([], dtype=object)
+
+    if internalSoftWeights is not None:
+        publicWeights = _extract_public_soft_weights(internalSoftWeights)
+        bestIndices = np.argmax(publicWeights, axis=1)
+        fallbackLabels = np.asarray([TARGET_ACTION_LABELS[index] for index in bestIndices], dtype=object)
+    else:
+        fallbackLabels = np.full((len(labels),), LABEL_OTHER, dtype=object)
+
+    publicLabels = fallbackLabels.copy()
+    for frameIndex, label in enumerate(labels):
+        label = _remap_legacy_label(label)
+        if label in TARGET_ACTION_LABELS:
+            publicLabels[frameIndex] = label
+    return np.asarray(publicLabels, dtype=object)
+
+
+def _label_auto_params_to_arrays(params):
+    params = CoerceLabelAutoParams(params)
+    names = []
+    values = []
+    for name in params.__dataclass_fields__:
+        value = getattr(params, name)
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            names.append(str(name))
+            values.append(float(value))
+    return np.asarray(names, dtype=np.str_), np.asarray(values, dtype=np.float32)
+
+
 def ApplyManualLabelRange(labelResult: LabelModuleResult, startFrame: int, endFrame: int, label: str) -> LabelModuleResult:
-    if label not in LABEL_TO_INDEX:
+    label = _remap_legacy_label(label)
+    if label not in TARGET_ACTION_LABELS:
         raise ValueError(f'Unsupported action label "{label}".')
 
     manualLabels = _ensure_manual_labels(labelResult)
     startFrame = max(0, int(min(startFrame, endFrame)))
     endFrame = min(len(manualLabels) - 1, int(max(startFrame, endFrame)))
+    if np.all(manualLabels[startFrame:endFrame + 1] == label):
+        return labelResult
+    _push_annotation_history(labelResult)
     manualLabels[startFrame:endFrame + 1] = label
     return _rebuild_final_labels(labelResult)
 
@@ -955,13 +1974,20 @@ def ClearManualLabelRange(labelResult: LabelModuleResult, startFrame: int, endFr
     manualLabels = _ensure_manual_labels(labelResult)
     startFrame = max(0, int(min(startFrame, endFrame)))
     endFrame = min(len(manualLabels) - 1, int(max(startFrame, endFrame)))
+    if np.all(manualLabels[startFrame:endFrame + 1] == None):
+        return labelResult
+    _push_annotation_history(labelResult)
     manualLabels[startFrame:endFrame + 1] = None
     return _rebuild_final_labels(labelResult)
 
 
 def ResetManualLabels(labelResult: LabelModuleResult) -> LabelModuleResult:
     manualLabels = _ensure_manual_labels(labelResult)
+    if np.all(manualLabels == None) and not labelResult.transition_overrides:
+        return labelResult
+    _push_annotation_history(labelResult)
     manualLabels[:] = None
+    labelResult.transition_overrides = []
     return _rebuild_final_labels(labelResult)
 
 
@@ -971,6 +1997,7 @@ def ApplyTransitionWidthRange(labelResult: LabelModuleResult, startFrame: int, e
     frameCount = len(labelResult.auto_labels)
     startFrame = max(0, min(int(startFrame), frameCount - 1))
     endFrame = max(0, min(int(endFrame), frameCount - 1))
+    _push_annotation_history(labelResult)
     labelResult.transition_overrides.append(_normalize_transition_override(startFrame, endFrame, width))
     return _rebuild_final_labels(labelResult)
 
@@ -978,10 +2005,14 @@ def ApplyTransitionWidthRange(labelResult: LabelModuleResult, startFrame: int, e
 def ClearTransitionWidthRange(labelResult: LabelModuleResult, startFrame: int, endFrame: int) -> LabelModuleResult:
     startFrame = int(min(startFrame, endFrame))
     endFrame = int(max(startFrame, endFrame))
-    labelResult.transition_overrides = [
+    retainedOverrides = [
         override for override in labelResult.transition_overrides
         if int(override["end_frame"]) < startFrame or int(override["start_frame"]) > endFrame
     ]
+    if len(retainedOverrides) == len(labelResult.transition_overrides):
+        return labelResult
+    _push_annotation_history(labelResult)
+    labelResult.transition_overrides = retainedOverrides
     return _rebuild_final_labels(labelResult)
 
 
@@ -994,7 +2025,6 @@ def SaveLabelAnnotations(labelResult: LabelModuleResult, clipNameOrPath: str, an
     payload = {
         "version": 1,
         "clip_name": NormalizeClipName(clipNameOrPath),
-        "clip_prior": labelResult.clip_prior,
         "manual_overrides": [
             {
                 "start_frame": int(segment.start_frame),
@@ -1019,7 +2049,12 @@ def SaveLabelAnnotations(labelResult: LabelModuleResult, clipNameOrPath: str, an
     return str(annotationFile)
 
 
-def LoadLabelAnnotations(labelResult: LabelModuleResult, clipNameOrPath: str, annotationPath: Optional[str] = None) -> bool:
+def LoadLabelAnnotations(
+    labelResult: LabelModuleResult,
+    clipNameOrPath: str,
+    annotationPath: Optional[str] = None,
+    recordHistory: bool = False,
+) -> bool:
     annotationFile = Path(annotationPath) if annotationPath is not None else GetDefaultAnnotationPath(clipNameOrPath)
     labelResult.annotation_path = str(annotationFile)
 
@@ -1030,13 +2065,15 @@ def LoadLabelAnnotations(labelResult: LabelModuleResult, clipNameOrPath: str, an
     payload = json.loads(annotationFile.read_text(encoding="utf-8"))
     overrides = list(payload.get("manual_overrides", []))
     transitionOverrides = list(payload.get("transition_overrides", []))
+    if recordHistory:
+        _push_annotation_history(labelResult)
 
     manualLabels = _ensure_manual_labels(labelResult)
     manualLabels[:] = None
 
     for override in overrides:
-        label = str(override["label"])
-        if label not in LABEL_TO_INDEX:
+        label = _remap_legacy_label(override["label"])
+        if label not in TARGET_ACTION_LABELS:
             continue
         startFrame = max(0, int(override["start_frame"]))
         endFrame = min(len(manualLabels) - 1, int(override["end_frame"]))
@@ -1075,23 +2112,110 @@ def ExportCompiledLabels(labelResult: LabelModuleResult, clipNameOrPath: str, ex
     exportFile = Path(exportPath) if exportPath is not None else GetDefaultExportPath(clipNameOrPath)
     exportFile.parent.mkdir(parents=True, exist_ok=True)
 
-    labelIds = np.asarray([LABEL_TO_INDEX[str(label)] for label in labelResult.final_labels], dtype=np.int32)
+    internalFinalLabels = np.asarray(labelResult.final_labels, dtype=np.str_)
+    internalFinalWeights = np.asarray(labelResult.soft_weights, dtype=np.float32)
+    internalLabelIds = np.asarray([LABEL_TO_INDEX[str(label)] for label in internalFinalLabels], dtype=np.int32)
+
+    internalAutoLabels = (
+        np.asarray(labelResult.auto_labels, dtype=np.str_)
+        if labelResult.auto_labels is not None else
+        np.asarray([], dtype=np.str_)
+    )
+    internalAutoWeights = (
+        _build_soft_weights_from_labels_with_overrides(internalAutoLabels)
+        if internalAutoLabels.size > 0 else
+        CreateEmptySoftWeights(0, fillLabel=LABEL_OTHER)
+    )
+    autoConfidence = (
+        np.asarray(labelResult.auto_confidence, dtype=np.float32)
+        if labelResult.auto_confidence is not None else
+        np.asarray([], dtype=np.float32)
+    )
+    motionRuleLabels = (
+        np.asarray(labelResult.feature_source.get("motion_rule_labels", []), dtype=np.str_)
+        if isinstance(labelResult.feature_source, dict) else
+        np.asarray([], dtype=np.str_)
+    )
+
+    publicAutoLabels = np.asarray(_collapse_labels_to_public(internalAutoLabels, internalAutoWeights), dtype=np.str_)
+    publicFinalLabels = np.asarray(_collapse_labels_to_public(internalFinalLabels, internalFinalWeights), dtype=np.str_)
+    publicSoftWeights = _extract_public_soft_weights(internalFinalWeights)
+    publicLabelIds = np.asarray([TARGET_LABEL_TO_INDEX[str(label)] for label in publicFinalLabels], dtype=np.int32)
+    publicSegments = _labels_to_segments(publicFinalLabels, source="public")
+    autoParamNames, autoParamValues = _label_auto_params_to_arrays(labelResult.auto_params)
+
     np.savez_compressed(
         exportFile,
         clip_name=NormalizeClipName(clipNameOrPath),
-        labels=np.asarray(ACTION_LABELS, dtype=object),
-        label_ids=labelIds,
-        final_labels=np.asarray(labelResult.final_labels, dtype=object),
-        soft_weights=np.asarray(labelResult.soft_weights, dtype=np.float32),
-        segments=np.asarray(
-            [
-                (segment.start_frame, segment.end_frame, segment.label)
-                for segment in labelResult.final_segments
-            ],
-            dtype=object,
-        ),
+        labels=np.asarray(TARGET_ACTION_LABELS, dtype=np.str_),
+        target_labels=np.asarray(TARGET_ACTION_LABELS, dtype=np.str_),
+        label_ids=publicLabelIds,
+        auto_labels=publicAutoLabels,
+        auto_confidence=autoConfidence,
+        auto_param_names=autoParamNames,
+        auto_param_values=autoParamValues,
+        motion_rule_labels=motionRuleLabels,
+        final_labels=publicFinalLabels,
+        soft_weights=publicSoftWeights,
+        segments=_segments_to_export_array(publicSegments),
+        internal_labels=np.asarray(ACTION_LABELS, dtype=np.str_),
+        internal_label_ids=internalLabelIds,
+        internal_auto_labels=internalAutoLabels,
+        internal_final_labels=internalFinalLabels,
+        internal_soft_weights=internalFinalWeights,
+        internal_segments=_segments_to_export_array(labelResult.final_segments),
     )
     return str(exportFile)
+
+
+def _build_processed_auto_labels_from_feature_source(
+    featureSource,
+    params=None,
+    minSegmentLength=6,
+):
+    params = CoerceLabelAutoParams(params)
+    scores = BuildAutoLabelScores(featureSource, params=params)
+    rawLabels = np.asarray(featureSource.get("motion_rule_labels", _labels_from_scores(scores)), dtype=object)
+    rawConfidence = np.asarray(
+        featureSource.get("auto_confidence", np.ones((featureSource["frame_count"],), dtype=np.float32)),
+        dtype=np.float32,
+    )
+    scoreMargins = _score_margin(scores)
+    dt = float(featureSource["dt"])
+    mergeMinFrames = max(int(minSegmentLength), _seconds_to_frames(dt, 0.10))
+    cleanupMinFrames = max(2, _seconds_to_frames(dt, 0.05))
+    transitionMinFrames = max(2, _seconds_to_frames(dt, params.transition_min_seconds))
+    labels = rawLabels.copy()
+    labels = _majority_filter_labels(labels, windowSize=max(1, int(params.smoothing_window)))
+    labels = _merge_short_segments(labels, minSegmentLength=mergeMinFrames, dt=dt)
+    labels = _insert_transition_labels(
+        labels,
+        transitionFrames=max(0, int(params.transition_frames) // 2),
+        scoreMargins=scoreMargins,
+        minSegmentLength=transitionMinFrames,
+        maxScoreMargin=float(params.transition_max_score_margin),
+    )
+    labels = _merge_short_segments(labels, minSegmentLength=cleanupMinFrames, dt=dt)
+    autoConfidence = _postprocess_auto_confidence(labels, rawLabels, rawConfidence, scoreMargins)
+    return scores, labels, autoConfidence
+
+
+def RebuildAutoLabelsWithParams(labelResult: LabelModuleResult, params=None, minSegmentLength=6) -> LabelModuleResult:
+    if labelResult.feature_source is None:
+        raise ValueError("feature_source must be available to rebuild auto labels.")
+
+    params = CoerceLabelAutoParams(params)
+    scores, labels, autoConfidence = _build_processed_auto_labels_from_feature_source(
+        labelResult.feature_source,
+        params=params,
+        minSegmentLength=minSegmentLength,
+    )
+    labelResult.auto_params = params
+    labelResult.auto_scores = np.asarray(scores, dtype=np.float32)
+    labelResult.auto_labels = np.asarray(labels, dtype=object)
+    labelResult.auto_confidence = np.asarray(autoConfidence, dtype=np.float32)
+    labelResult.auto_segments = _labels_to_segments(labelResult.auto_labels, source="auto")
+    return _rebuild_final_labels(labelResult)
 
 
 def BuildAutoFrameLabels(
@@ -1105,7 +2229,13 @@ def BuildAutoFrameLabels(
     smoothingWindow=7,
     minSegmentLength=6,
     transitionFrames=DEFAULT_TRANSITION_FRAMES,
+    labelParams=None,
 ):
+    params = CoerceLabelAutoParams(labelParams)
+    if labelParams is None:
+        params.smoothing_window = int(smoothingWindow)
+        params.transition_frames = int(transitionFrames)
+
     featureSource = BuildLabelFeatureSource(
         clipNameOrPath,
         globalPositions,
@@ -1115,19 +2245,20 @@ def BuildAutoFrameLabels(
         terrainProvider=terrainProvider,
         jointNames=jointNames,
     )
-    scores = BuildAutoLabelScores(featureSource)
-    labels = _labels_from_scores(scores)
-    labels = _majority_filter_labels(labels, windowSize=smoothingWindow)
-    labels = _merge_short_segments(labels, minSegmentLength=minSegmentLength)
-    labels = _insert_transition_labels(labels, transitionFrames=transitionFrames)
-    labels = _merge_short_segments(labels, minSegmentLength=max(2, minSegmentLength // 2))
+    scores, labels, autoConfidence = _build_processed_auto_labels_from_feature_source(
+        featureSource,
+        params=params,
+        minSegmentLength=minSegmentLength,
+    )
 
     autoSegments = _labels_to_segments(labels, source="auto")
     result = BuildLabelModuleResult(
         clipNameOrPath,
         featureSource=featureSource,
+        autoParams=params,
         autoScores=scores,
         autoLabels=np.asarray(labels, dtype=object),
+        autoConfidence=autoConfidence,
         autoSegments=autoSegments,
         annotationPath=str(GetDefaultAnnotationPath(clipNameOrPath)),
     )

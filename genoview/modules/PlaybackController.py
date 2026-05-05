@@ -31,6 +31,13 @@ class PlaybackController:
         self.loopStart = 0
         self.loopEnd = max(0, frameCount - 1)
 
+    @staticmethod
+    def _key_pressed_or_repeat(key):
+        if IsKeyPressed(key):
+            return True
+        repeatFn = globals().get("IsKeyPressedRepeat")
+        return bool(callable(repeatFn) and repeatFn(key))
+
     @property
     def current_frame(self):
         return int(self.frame) % self.frameCount
@@ -52,6 +59,16 @@ class PlaybackController:
 
     def set_current_frame(self, frame):
         self.frame = float(self._clamp_frame(frame))
+
+    def toggle_playing(self):
+        self.playing = not self.playing
+
+    def step_frames(self, delta):
+        self.playing = False
+        self.set_current_frame(self.current_frame + int(delta))
+
+    def nudge_speed(self, delta):
+        self.speedIndex = int(min(max(self.speedIndex + int(delta), 0), len(self.speeds) - 1))
 
     def mark_selection_start(self, frame=None):
         self.selectionStart = self._clamp_frame(self.current_frame if frame is None else frame)
@@ -76,6 +93,30 @@ class PlaybackController:
 
     def clear_loop(self):
         self.loopEnabled = False
+
+    def handle_shortcuts(self):
+        shiftDown = (
+            IsKeyDown(globals().get("KEY_LEFT_SHIFT", 340)) or
+            IsKeyDown(globals().get("KEY_RIGHT_SHIFT", 344))
+        )
+        stepSize = 10 if shiftDown else 1
+
+        if IsKeyPressed(globals().get("KEY_SPACE", 32)):
+            self.toggle_playing()
+        if self._key_pressed_or_repeat(globals().get("KEY_LEFT", 263)):
+            self.step_frames(-stepSize)
+        if self._key_pressed_or_repeat(globals().get("KEY_RIGHT", 262)):
+            self.step_frames(stepSize)
+        if self._key_pressed_or_repeat(globals().get("KEY_UP", 265)):
+            self.nudge_speed(1)
+        if self._key_pressed_or_repeat(globals().get("KEY_DOWN", 264)):
+            self.nudge_speed(-1)
+        if IsKeyPressed(globals().get("KEY_HOME", 268)):
+            self.playing = False
+            self.set_current_frame(0)
+        if IsKeyPressed(globals().get("KEY_END", 269)):
+            self.playing = False
+            self.set_current_frame(self.frameCount - 1)
 
     def _apply_loop_constraints(self):
         if not self.loopEnabled or self.frameCount <= 0:
@@ -103,7 +144,10 @@ class PlaybackController:
 
     def get_ui_layout(self, screenWidth, screenHeight, numLabelTracks=1):
         numLabelTracks = max(0, int(numLabelTracks))
-        panelHeight = 74 + 20 * numLabelTracks
+        labelTrackHeight = 16
+        trackSpacing = 26
+        sliderHeight = 18
+        panelHeight = 82 + trackSpacing * numLabelTracks
         panel = Rectangle(20, screenHeight - 20 - panelHeight, screenWidth - 40, panelHeight)
         controlsY = panel.y + 14
         labelX = 40
@@ -117,14 +161,13 @@ class PlaybackController:
             100,
             panelRight - timelineX - frameReadoutWidth - readoutGap - rightGap,
         )
-        firstTrackY = controlsY + 36
-        trackSpacing = 20
+        firstTrackY = controlsY + 38
         labelRows = []
         for index in range(numLabelTracks):
             labelRows.append(
                 (
-                    Rectangle(labelX, firstTrackY + index * trackSpacing - 8, labelWidth, 18),
-                    Rectangle(timelineX, firstTrackY + index * trackSpacing, timelineWidth, 10),
+                    Rectangle(labelX, firstTrackY + index * trackSpacing - 9, labelWidth, 20),
+                    Rectangle(timelineX, firstTrackY + index * trackSpacing, timelineWidth, labelTrackHeight),
                 )
             )
         sliderY = firstTrackY + numLabelTracks * trackSpacing + 4
@@ -133,11 +176,12 @@ class PlaybackController:
             controls_y=controlsY,
             label_rows=labelRows,
             frame_label=Rectangle(labelX, sliderY - 4, labelWidth, 18),
-            slider=Rectangle(timelineX, sliderY, timelineWidth, 14),
+            slider=Rectangle(timelineX, sliderY, timelineWidth, sliderHeight),
             frame_readout=Rectangle(panelRight - frameReadoutWidth - rightGap, sliderY - 2, frameReadoutWidth, 18),
         )
 
     def draw_ui(self, screenWidth, screenHeight, numLabelTracks=1):
+        self.handle_shortcuts()
         layout = self.get_ui_layout(screenWidth, screenHeight, numLabelTracks=numLabelTracks)
         playbackPanel = layout.panel
         playbackSlider = layout.slider
@@ -146,15 +190,13 @@ class PlaybackController:
         GuiGroupBox(playbackPanel, b"Playback")
 
         if GuiButton(Rectangle(30, controlsY, 70, 24), b"Pause" if self.playing else b"Play"):
-            self.playing = not self.playing
+            self.toggle_playing()
 
         if GuiButton(Rectangle(110, controlsY, 55, 24), b"Prev"):
-            self.playing = False
-            self.set_current_frame((self.current_frame - 1) % self.frameCount)
+            self.step_frames(-1)
 
         if GuiButton(Rectangle(175, controlsY, 55, 24), b"Next"):
-            self.playing = False
-            self.set_current_frame((self.current_frame + 1) % self.frameCount)
+            self.step_frames(1)
 
         if GuiButton(Rectangle(240, controlsY, 45, 24), b"Mark A"):
             self.mark_selection_start()

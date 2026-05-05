@@ -3,7 +3,7 @@ from pyray import Color, Rectangle, Vector3
 from raylib import *
 
 from genoview.State import DebugState
-from genoview.modules.LabelModule import DEFAULT_TRANSITION_FRAMES
+from genoview.modules.LabelModule import CreateDefaultLabelAutoParams, DEFAULT_TRANSITION_FRAMES
 from genoview.modules.PlaybackController import PlaybackController
 from genoview.utils.DebugDraw import (
     DrawBodyProxyFrame,
@@ -49,6 +49,7 @@ def CreateDebugState(frame_count, frame_time):
         pose_model_color=Color(110, 190, 255, 255),
         selected_action_label="walk",
         transition_width=DEFAULT_TRANSITION_FRAMES,
+        label_auto_params=CreateDefaultLabelAutoParams(),
         annotation_status="Auto-loaded labels",
         playback=PlaybackController(frame_count, frame_time),
     )
@@ -276,7 +277,9 @@ def DrawMotionDebugOverlay(
 def DrawRenderingOptionsPanel(
     app,
     frame_state,
+    panel_x,
     panel_y,
+    panel_width,
     panel_height,
     draw_terrain_metrics,
     ensure_terrain_focus,
@@ -284,11 +287,11 @@ def DrawRenderingOptionsPanel(
     ensure_pose_error_frame):
 
     debug = app.debug
-    screen_width = app.screen_width
-    content_x = screen_width - 250
+    content_x = panel_x + 10
     content_y = panel_y + 35
     row_height = 20
     row_gap = 2
+    content_width = max(180, int(panel_width) - 20)
 
     content_height = 35 + row_height
     content_height += GetAsyncProgressHeight(app)
@@ -308,19 +311,19 @@ def DrawRenderingOptionsPanel(
     if debug.module_dropdown_open:
         content_height = max(content_height, GetModuleDropdownHeight(app))
 
-    panel_height = max(panel_height, content_height + 20)
-    GuiGroupBox(Rectangle(screen_width - 260, panel_y, 240, panel_height), b"Rendering")
-    GuiLabel(Rectangle(content_x, content_y, 220, row_height), b"Flat Ground: On")
+    panel_height = min(max(120, content_height + 20), int(panel_height))
+    GuiGroupBox(Rectangle(panel_x, panel_y, panel_width, panel_height), b"Rendering")
+    GuiLabel(Rectangle(content_x, content_y, content_width, row_height), b"Flat Ground: On")
     content_y += row_height + row_gap
-    content_y = _draw_async_progress(app, content_x, content_y, 220)
+    content_y = _draw_async_progress(app, content_x, content_y, content_width)
 
     if terrain_metrics_enabled:
-        content_y = draw_terrain_metrics(app, frame_state, ensure_terrain_focus, content_y) + row_gap
+        content_y = draw_terrain_metrics(app, frame_state, ensure_terrain_focus, content_x, content_width, content_y) + row_gap
     if debug.draw_terrain_penetration_ptr[0]:
         ensure_penetration_frame(app, frame_state)
         if frame_state.penetration_frame is not None:
             GuiLabel(
-                Rectangle(content_x, content_y, 220, row_height),
+                Rectangle(content_x, content_y, content_width, row_height),
                 b"Pen: %d max %.4f" % (
                     frame_state.penetration_count,
                     frame_state.max_penetration_depth,
@@ -332,7 +335,7 @@ def DrawRenderingOptionsPanel(
         ensure_pose_error_frame(app, frame_state)
         if frame_state.pose_comparison_positions is not None:
             GuiLabel(
-                Rectangle(content_x, content_y, 220, row_height),
+                Rectangle(content_x, content_y, content_width, row_height),
                 b"%s: mean %.6f max %.6f" % (
                     frame_state.pose_error_label,
                     frame_state.pose_position_error_mean,
@@ -340,4 +343,5 @@ def DrawRenderingOptionsPanel(
                 ),
             )
 
-    DrawModuleDropdown(app, content_x, panel_y + 10, 220)
+    DrawModuleDropdown(app, content_x, panel_y + 10, content_width)
+    return panel_height

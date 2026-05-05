@@ -16,9 +16,9 @@ from genoview.utils.DebugDraw import OffsetPositions
 
 
 def ApplyLabelResultToFrameState(frame_state, label_result):
-    frame_state.clip_prior = label_result.clip_prior
     frame_state.auto_labels = label_result.auto_labels
     frame_state.auto_segments = label_result.auto_segments
+    frame_state.auto_confidence = label_result.auto_confidence
     frame_state.final_labels = label_result.final_labels
     frame_state.final_segments = label_result.final_segments
     frame_state.soft_weights = label_result.soft_weights
@@ -31,6 +31,11 @@ def ApplyLabelResultToFrameState(frame_state, label_result):
         str(label_result.final_labels[frame_state.animation_frame])
         if label_result.final_labels is not None and len(label_result.final_labels) > 0 else
         frame_state.current_auto_label
+    )
+    frame_state.current_auto_confidence = (
+        float(label_result.auto_confidence[frame_state.animation_frame])
+        if label_result.auto_confidence is not None and len(label_result.auto_confidence) > 0 else
+        0.0
     )
     return frame_state
 
@@ -53,11 +58,12 @@ def BuildBaseFrameState(app, animation_frame):
         animation_frame=animation_frame,
         frame_count=motion.bvh_animation.frame_count,
         clip_name=motion.clip_name,
-        clip_prior="labels off",
         current_auto_label="labels off",
         current_final_label="labels off",
+        current_auto_confidence=0.0,
         auto_labels=None,
         auto_segments=None,
+        auto_confidence=None,
         final_labels=None,
         final_segments=None,
         soft_weights=None,

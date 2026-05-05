@@ -357,7 +357,7 @@ def DrawTerrainDebugOverlay(app):
         )
 
 
-def DrawTerrainRenderPanelMetrics(app, frame_state, ensure_terrain_focus, start_y):
+def DrawTerrainRenderPanelMetrics(app, frame_state, ensure_terrain_focus, start_x, content_width, start_y):
     motion = app.motion
     ensure_terrain_focus(app, frame_state)
     if (
@@ -368,29 +368,30 @@ def DrawTerrainRenderPanelMetrics(app, frame_state, ensure_terrain_focus, start_
         return start_y
     app.features.mount_clip(app, "terrain_height_grid")
     terrain_provider = app.features.mount_clip(app, "terrain_provider")
-    x = app.screen_width - 250
+    x = int(start_x)
     y = int(start_y)
     row_height = 20
+    content_width = int(content_width)
 
-    GuiLabel(Rectangle(x, y, 220, row_height), b"Terrain: On")
+    GuiLabel(Rectangle(x, y, content_width, row_height), b"Terrain: On")
     y += row_height
     GuiLabel(
-        Rectangle(x, y, 220, row_height),
+        Rectangle(x, y, content_width, row_height),
         b"Terrain Grid: %d x %d" % (
             motion.terrain_height_grid["num_x"],
             motion.terrain_height_grid["num_z"],
         ),
     )
     y += row_height
-    GuiLabel(Rectangle(x, y, 220, row_height), b"Terrain H: %.4f" % frame_state.terrain_height_at_focus)
+    GuiLabel(Rectangle(x, y, content_width, row_height), b"Terrain H: %.4f" % frame_state.terrain_height_at_focus)
     y += row_height
     GuiLabel(
-        Rectangle(x, y, 220, row_height),
+        Rectangle(x, y, content_width, row_height),
         b"Terrain Samples: %d" % len(terrain_provider.sample_positions),
     )
     y += row_height
     GuiLabel(
-        Rectangle(x, y, 220, row_height),
+        Rectangle(x, y, content_width, row_height),
         b"Terrain N: [% .2f % .2f % .2f]" % (
             frame_state.terrain_normal_at_focus[0],
             frame_state.terrain_normal_at_focus[1],

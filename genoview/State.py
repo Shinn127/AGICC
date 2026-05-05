@@ -76,6 +76,7 @@ class DebugState:
     pose_model_color: Any
     selected_action_label: str
     transition_width: int
+    label_auto_params: Any
     annotation_status: str
     playback: Any
     module_dropdown_open: bool = False
@@ -174,11 +175,12 @@ class FrameState:
     animation_frame: int
     frame_count: int
     clip_name: str
-    clip_prior: str
     current_auto_label: str
     current_final_label: str
+    current_auto_confidence: float
     auto_labels: Any
     auto_segments: Any
+    auto_confidence: Any
     final_labels: Any
     final_segments: Any
     soft_weights: Any
