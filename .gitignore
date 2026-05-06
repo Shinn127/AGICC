@@ -5,6 +5,7 @@
 *.mb
 *.codex
 *.vscode
+.claude
 
 ref/
 .DS_Store
