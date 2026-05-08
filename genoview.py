@@ -140,8 +140,8 @@ def _unload_app_resources(app):
 
 
 def main():
-    screen_width = 1920
-    screen_height = 1080
+    screen_width = 1600
+    screen_height = 900
 
     SetConfigFlags(FLAG_VSYNC_HINT)
     InitWindow(screen_width, screen_height, b"GenoViewPython")

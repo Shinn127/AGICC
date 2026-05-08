@@ -21,11 +21,9 @@ from genoview.modules.LabelModule import (
     CanUndoLabelEdit,
     ClearManualLabelRange,
     ClearTransitionWidthRange,
-    CreateDefaultLabelAutoParams,
     ExportCompiledLabels,
     LoadLabelAnnotations,
     RedoLabelEdit,
-    RebuildAutoLabelsWithParams,
     ResetManualLabels,
     SaveLabelAnnotations,
     TARGET_ACTION_LABELS,
@@ -356,124 +354,6 @@ def _draw_int_param_stepper(x, y, label, value, step, min_value, max_value):
     return int(value)
 
 
-def _draw_label_auto_param_controls(app, label_result, x, y, width):
-    params = app.debug.label_auto_params
-    row_y = y
-
-    GuiLabel(Rectangle(x, row_y, width, 20), b"Auto Params")
-    if GuiButton(Rectangle(x + 238, row_y - 2, 48, 24), b"Build"):
-        RebuildAutoLabelsWithParams(label_result, params)
-        app.debug.annotation_status = "Rebuilt auto labels"
-    if GuiButton(Rectangle(x + 292, row_y - 2, 42, 24), b"Def"):
-        app.debug.label_auto_params = CreateDefaultLabelAutoParams()
-        RebuildAutoLabelsWithParams(label_result, app.debug.label_auto_params)
-        app.debug.annotation_status = "Reset auto params"
-
-    row_y += 28
-    params.crouch_locomotion_torso_ratio = _draw_float_param_stepper(
-        x,
-        row_y,
-        "Crouch torso",
-        params.crouch_locomotion_torso_ratio,
-        0.01,
-        0.75,
-        1.10,
-    )
-    row_y += 26
-    params.crouch_speed_max = _draw_float_param_stepper(
-        x,
-        row_y,
-        "Crouch speed",
-        params.crouch_speed_max,
-        0.05,
-        0.30,
-        2.20,
-    )
-    row_y += 26
-    params.crouch_min_seconds = _draw_float_param_stepper(
-        x,
-        row_y,
-        "Crouch min s",
-        params.crouch_min_seconds,
-        0.05,
-        0.05,
-        1.00,
-    )
-    row_y += 26
-    params.jump_vy_body_ratio = _draw_float_param_stepper(
-        x,
-        row_y,
-        "Jump vy",
-        params.jump_vy_body_ratio,
-        0.05,
-        0.20,
-        1.60,
-    )
-    row_y += 26
-    params.jump_lift_body_ratio = _draw_float_param_stepper(
-        x,
-        row_y,
-        "Jump lift",
-        params.jump_lift_body_ratio,
-        0.01,
-        0.02,
-        0.20,
-    )
-    row_y += 26
-    params.run_speed_threshold = _draw_float_param_stepper(
-        x,
-        row_y,
-        "Run speed",
-        params.run_speed_threshold,
-        0.05,
-        0.60,
-        3.00,
-    )
-    row_y += 26
-    params.turn_yaw_rate_threshold = _draw_float_param_stepper(
-        x,
-        row_y,
-        "Turn yaw",
-        params.turn_yaw_rate_threshold,
-        0.10,
-        0.30,
-        4.00,
-    )
-    row_y += 26
-    params.turn_speed_min = _draw_float_param_stepper(
-        x,
-        row_y,
-        "Turn speed",
-        params.turn_speed_min,
-        0.05,
-        0.00,
-        1.50,
-    )
-    row_y += 26
-    params.transition_max_score_margin = _draw_float_param_stepper(
-        x,
-        row_y,
-        "Trans margin",
-        params.transition_max_score_margin,
-        0.05,
-        0.00,
-        1.00,
-    )
-    row_y += 26
-    params.smoothing_window = _draw_int_param_stepper(
-        x,
-        row_y,
-        "Smooth win",
-        params.smoothing_window,
-        2,
-        1,
-        21,
-    )
-    if params.smoothing_window % 2 == 0:
-        params.smoothing_window += 1
-    return row_y + 28
-
-
 def _control_down():
     return (
         IsKeyDown(globals().get("KEY_LEFT_CONTROL", 341)) or
@@ -781,7 +661,9 @@ def DrawLabelFeatureUI(
     annotate_inner_x = annotate_panel_x + 10
     annotate_inner_width = annotate_panel_width - 20
     label_button_rows = (len(TARGET_ACTION_LABELS) + 2) // 3
-    annotate_panel_height = 676 + max(0, label_button_rows - 3) * 34
+    annotate_panel_content_height = 360 + max(0, label_button_rows - 3) * 34
+    annotate_panel_height_max = max(120, int(playback_layout.panel.y - annotate_panel_y - 12))
+    annotate_panel_height = min(annotate_panel_content_height, annotate_panel_height_max)
     action_row_offset = max(0, label_button_rows - 3) * 34
     GuiGroupBox(Rectangle(annotate_panel_x, annotate_panel_y, annotate_panel_width, annotate_panel_height), b"Annotate")
     GuiLabel(
@@ -927,14 +809,6 @@ def DrawLabelFeatureUI(
             selection_end,
         )
         debug.annotation_status = "Cleared blend width"
-
-    _draw_label_auto_param_controls(
-        app,
-        label_result,
-        annotate_inner_x,
-        action_row_y + 132,
-        annotate_inner_width,
-    )
 
     GuiLabel(label_rect, timeline_mode.capitalize().encode("utf-8"))
     if timeline_mode == "auto":

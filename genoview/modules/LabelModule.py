@@ -58,8 +58,8 @@ DEFAULT_TRANSITION_MAX_SCORE_MARGIN = 0.35
 DEFAULT_IDLE_MIN_SECONDS = 0.25
 DEFAULT_WALK_MIN_SECONDS = 0.20
 DEFAULT_RUN_MIN_SECONDS = 0.20
-DEFAULT_JUMP_MIN_SECONDS = 0.12
-DEFAULT_CROUCH_MIN_SECONDS = 0.25
+DEFAULT_JUMP_MIN_SECONDS = 0.20
+DEFAULT_CROUCH_MIN_SECONDS = 0.35
 DEFAULT_OTHER_MIN_SECONDS = 0.08
 DEFAULT_CROUCH_GAP_SECONDS = 0.10
 DEFAULT_JUMP_GAP_SECONDS = 0.05
@@ -78,6 +78,8 @@ class LabelAutoParams:
     turn_yaw_rate_threshold: float = 1.20
     turn_speed_min: float = 0.25
     turn_context_seconds: float = 0.35
+    crouch_root_ratio_low: float = 0.82
+    crouch_root_ratio_high: float = 1.00
     crouch_deep_torso_ratio: float = 0.87
     crouch_locomotion_torso_ratio: float = 0.93
     crouch_knee_flexion_min: float = 50.0
@@ -900,6 +902,112 @@ def _compute_step_like_signal(leftContact, rightContact):
     return _sliding_mean(contactBalance, windowSize=9)
 
 
+def _smoothstep_score(values, low, high):
+    values = np.asarray(values, dtype=np.float32)
+    low = float(low)
+    high = float(high)
+    if high <= low:
+        return (values >= high).astype(np.float32)
+    alpha = np.clip((values - low) / max(high - low, 1e-6), 0.0, 1.0)
+    return (alpha * alpha * (3.0 - 2.0 * alpha)).astype(np.float32)
+
+
+def _get_locomotion_features(featureSource, params):
+    frameCount = int(featureSource["frame_count"])
+    speed = np.asarray(featureSource["root_horizontal_speed"], dtype=np.float32)
+    leftContact = np.asarray(featureSource["left_contact"], dtype=np.float32)
+    rightContact = np.asarray(featureSource["right_contact"], dtype=np.float32)
+    contactFraction = np.asarray(featureSource["contact_fraction"], dtype=np.float32)
+    localFlightRatio = np.asarray(
+        featureSource.get("local_flight_ratio", np.zeros((frameCount,), dtype=np.float32)),
+        dtype=np.float32,
+    )
+    bodyHeight = max(float(featureSource.get("body_height", 1.0)), 1e-3)
+    rootHeight = np.asarray(
+        featureSource.get("root_height_above_ground", featureSource.get("hips_y", np.zeros((frameCount,), dtype=np.float32))),
+        dtype=np.float32,
+    )
+    standingHipsHeight = max(float(featureSource.get("standing_hips_height", featureSource.get("standing_height", 1.0))), 1e-3)
+
+    stepSignal = _compute_step_like_signal(leftContact, rightContact)
+    walkPercentile = np.clip(float(params.walk_min_speed_percentile), 1.0, 60.0)
+    walkMinSpeed = max(0.12, float(np.percentile(speed, walkPercentile)))
+    speedGate = _smoothstep_score(speed, 0.2 * walkMinSpeed, 1.2 * walkMinSpeed)
+    stepGate = _smoothstep_score(stepSignal, 0.08, 0.28)
+    rootHeightRatio = rootHeight / max(standingHipsHeight, 1e-6)
+    standingRootScore = _smoothstep_score(rootHeightRatio, 0.72, 0.92)
+
+    locomotionMask = (speed >= walkMinSpeed) & (stepSignal >= 0.18)
+    runThreshold = _estimate_run_speed_threshold(
+        speed[locomotionMask],
+        defaultThreshold=float(params.run_speed_threshold),
+    )
+    runDominantMotion = (
+        float(np.percentile(speed, 65)) >= float(params.run_speed_threshold) + 0.20
+        and float(np.percentile(localFlightRatio, 60)) >= 0.12
+        and float(np.percentile(contactFraction, 50)) <= 0.50
+    )
+    if runDominantMotion:
+        runThreshold = min(runThreshold, max(1.10, float(np.percentile(speed, 25))))
+
+    return {
+        "speed": speed,
+        "contact_fraction": contactFraction,
+        "local_flight_ratio": localFlightRatio,
+        "step_signal": stepSignal,
+        "walk_min_speed": float(walkMinSpeed),
+        "speed_gate": speedGate,
+        "step_gate": stepGate,
+        "standing_root_score": standingRootScore,
+        "run_threshold": float(runThreshold),
+        "body_height": bodyHeight,
+        "root_height_ratio": rootHeightRatio.astype(np.float32),
+    }
+
+
+def _score_crouch_posture(featureSource, params):
+    frameCount = int(featureSource["frame_count"])
+    if frameCount == 0:
+        return np.zeros((0,), dtype=np.float32)
+
+    rootHeight = np.asarray(
+        featureSource.get("root_height_above_ground", featureSource.get("hips_y", np.zeros((frameCount,), dtype=np.float32))),
+        dtype=np.float32,
+    )
+    standingHipsHeight = max(float(featureSource.get("standing_hips_height", featureSource.get("standing_height", 1.0))), 1e-3)
+    torsoHeight = np.asarray(featureSource.get("torso_height", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    standingTorsoHeight = max(float(featureSource.get("standing_torso_height", 1.0)), 1e-3)
+    kneeFlexion = np.asarray(featureSource.get("knee_flexion", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+
+    rootRatio = rootHeight / max(standingHipsHeight, 1e-6)
+    torsoRatio = torsoHeight / max(standingTorsoHeight, 1e-6)
+    deepTorsoRatio = min(float(params.crouch_deep_torso_ratio), float(params.crouch_locomotion_torso_ratio) - 0.02)
+    locomotionTorsoRatio = float(params.crouch_locomotion_torso_ratio)
+    kneeStart = max(0.0, float(params.crouch_knee_flexion_min) - 15.0)
+    kneeFull = max(kneeStart + 1.0, float(params.crouch_knee_flexion_min) + 25.0)
+
+    rootLowScore = 1.0 - _smoothstep_score(rootRatio, float(params.crouch_root_ratio_low), float(params.crouch_root_ratio_high))
+    deepTorsoScore = 1.0 - _smoothstep_score(
+        torsoRatio,
+        max(0.0, deepTorsoRatio - 0.10),
+        deepTorsoRatio,
+    )
+    locomotionTorsoScore = 1.0 - _smoothstep_score(
+        torsoRatio,
+        max(0.0, locomotionTorsoRatio - 0.08),
+        locomotionTorsoRatio,
+    )
+    kneeScore = _smoothstep_score(kneeFlexion, kneeStart, kneeFull)
+
+    return np.clip(
+        0.45 * rootLowScore +
+        0.30 * np.maximum(deepTorsoScore, locomotionTorsoScore) +
+        0.25 * kneeScore,
+        0.0,
+        1.0,
+    ).astype(np.float32)
+
+
 
 def _build_segment_support(labels):
     labels = np.asarray(labels, dtype=object)
@@ -987,93 +1095,87 @@ def _score_idle(featureSource):
     return (groundedScore * speedScore * postureScore * verticalStabilityScore * calibrationPenalty).astype(np.float32)
 
 
-def _score_walk(featureSource):
+def _score_walk(featureSource, params=None, crouchPostureScore=None):
+    params = CoerceLabelAutoParams(params)
     frameCount = int(featureSource["frame_count"])
     if frameCount == 0:
         return np.zeros((0,), dtype=np.float32)
 
-    speed = np.asarray(featureSource["root_horizontal_speed"], dtype=np.float32)
-    leftContact = np.asarray(featureSource["left_contact"], dtype=np.float32)
-    rightContact = np.asarray(featureSource["right_contact"], dtype=np.float32)
-    contactFraction = np.asarray(featureSource["contact_fraction"], dtype=np.float32)
-    localFlightRatio = np.asarray(featureSource.get("local_flight_ratio", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    features = _get_locomotion_features(featureSource, params)
+    speed = features["speed"]
+    contactFraction = features["contact_fraction"]
+    localFlightRatio = features["local_flight_ratio"]
+    walkMinSpeed = features["walk_min_speed"]
+    runThreshold = features["run_threshold"]
 
-    stepSignal = _compute_step_like_signal(leftContact, rightContact)
-    walkMinSpeed = max(0.12, float(np.percentile(speed, 20.0)))
-
-    speedGate = np.clip((speed - 0.2 * walkMinSpeed) / max(walkMinSpeed, 1e-6), 0.0, 1.0)
-    stepGate = np.clip((stepSignal - 0.08) / 0.20, 0.0, 1.0)
-
-    locomotionMask = (speed >= walkMinSpeed) & (stepSignal >= 0.18)
-    runThreshold = _estimate_run_speed_threshold(speed[locomotionMask], defaultThreshold=RUN_SPEED_THRESHOLD)
-
-    walkBand = np.clip((runThreshold - speed) / max(runThreshold - walkMinSpeed, 1e-6), 0.0, 1.0)
-    contactScore = np.clip((contactFraction - 0.15) / 0.35, 0.0, 1.0)
-    flightPenalty = 1.0 - np.clip((localFlightRatio - 0.05) / 0.15, 0.0, 1.0)
-
-    locomotionScore = speedGate * stepGate
-    return (
-        0.35 * locomotionScore + 0.35 * walkBand + 0.15 * contactScore + 0.15 * flightPenalty
-    ).astype(np.float32)
-
-
-def _score_run(featureSource):
-    frameCount = int(featureSource["frame_count"])
-    if frameCount == 0:
-        return np.zeros((0,), dtype=np.float32)
-
-    speed = np.asarray(featureSource["root_horizontal_speed"], dtype=np.float32)
-    leftContact = np.asarray(featureSource["left_contact"], dtype=np.float32)
-    rightContact = np.asarray(featureSource["right_contact"], dtype=np.float32)
-    contactFraction = np.asarray(featureSource["contact_fraction"], dtype=np.float32)
-    localFlightRatio = np.asarray(featureSource.get("local_flight_ratio", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
-    motionEnergy = np.asarray(featureSource["motion_energy"], dtype=np.float32)
-
-    stepSignal = _compute_step_like_signal(leftContact, rightContact)
-    walkMinSpeed = max(0.12, float(np.percentile(speed, 20.0)))
-
-    speedGate = np.clip((speed - 0.2 * walkMinSpeed) / max(walkMinSpeed, 1e-6), 0.0, 1.0)
-    stepGate = np.clip((stepSignal - 0.08) / 0.20, 0.0, 1.0)
-
-    locomotionMask = (speed >= walkMinSpeed) & (stepSignal >= 0.18)
-    runThreshold = _estimate_run_speed_threshold(speed[locomotionMask], defaultThreshold=RUN_SPEED_THRESHOLD)
-
-    runDominantMotion = (
-        float(np.percentile(speed, 65)) >= RUN_SPEED_THRESHOLD + 0.20
-        and float(np.percentile(localFlightRatio, 60)) >= 0.12
-        and float(np.percentile(contactFraction, 50)) <= 0.50
+    locomotionScore = features["speed_gate"] * features["step_gate"]
+    walkBand = 1.0 - _smoothstep_score(
+        speed,
+        max(walkMinSpeed, 0.70 * runThreshold),
+        runThreshold,
     )
-    if runDominantMotion:
-        runThreshold = min(runThreshold, max(1.10, float(np.percentile(speed, 25))))
+    lowSpeedPenalty = _smoothstep_score(speed, 0.5 * walkMinSpeed, walkMinSpeed)
+    contactScore = _smoothstep_score(contactFraction, 0.15, 0.50)
+    flightPenalty = 1.0 - _smoothstep_score(localFlightRatio, 0.05, max(0.06, float(params.run_flight_threshold) + 0.10))
+    runCompetition = np.maximum(
+        _smoothstep_score(speed, 0.85 * runThreshold, runThreshold),
+        _smoothstep_score(localFlightRatio, float(params.run_flight_threshold), float(params.run_flight_threshold) + 0.18),
+    )
 
-    runSpeedMargin = max(0.10, 0.10 * runThreshold)
-    runBand = np.clip((speed - runThreshold) / max(runSpeedMargin, 1e-6), 0.0, 1.0)
+    runSuppression = 1.0 - 0.55 * np.clip(runCompetition, 0.0, 1.0)
 
-    flightScore = np.clip((localFlightRatio - 0.05) / 0.20, 0.0, 1.0)
-    lowContactScore = np.clip((0.40 - contactFraction) / 0.30, 0.0, 1.0)
-    runStyleScore = np.maximum(flightScore, lowContactScore)
+    score = (
+        0.40 * locomotionScore +
+        0.25 * walkBand +
+        0.20 * contactScore +
+        0.15 * flightPenalty
+    ) * lowSpeedPenalty * runSuppression
+    return np.clip(score, 0.0, 1.0).astype(np.float32)
+
+
+def _score_run(featureSource, params=None, crouchPostureScore=None):
+    params = CoerceLabelAutoParams(params)
+    frameCount = int(featureSource["frame_count"])
+    if frameCount == 0:
+        return np.zeros((0,), dtype=np.float32)
+
+    features = _get_locomotion_features(featureSource, params)
+    speed = features["speed"]
+    contactFraction = features["contact_fraction"]
+    localFlightRatio = features["local_flight_ratio"]
+    motionEnergy = np.asarray(featureSource["motion_energy"], dtype=np.float32)
+    runThreshold = features["run_threshold"]
+
+    runSpeedMargin = max(0.10, float(params.run_speed_margin_ratio) * runThreshold)
+    runBand = _smoothstep_score(speed, runThreshold, runThreshold + runSpeedMargin)
+
+    flightScore = _smoothstep_score(localFlightRatio, 0.05, max(0.06, float(params.run_flight_threshold) + 0.12))
+    lowContactScore = 1.0 - _smoothstep_score(contactFraction, float(params.run_low_contact_max), 0.55)
+    runStyleScore = 0.75 * flightScore + 0.25 * lowContactScore
 
     motionEnergyMid = float(np.percentile(motionEnergy, 50))
     motionEnergyHigh = float(np.percentile(motionEnergy, 85))
-    energyScore = np.clip(
-        (motionEnergy - motionEnergyMid) / max(motionEnergyHigh - motionEnergyMid, 1e-6),
-        0.0,
-        1.0,
+    energyScore = _smoothstep_score(motionEnergy, motionEnergyMid, motionEnergyHigh)
+
+    locomotionScore = features["speed_gate"] * features["step_gate"]
+
+    score = (
+        0.28 * locomotionScore +
+        0.34 * runBand +
+        0.28 * runStyleScore +
+        0.10 * energyScore
     )
-
-    locomotionScore = speedGate * stepGate
-    energyFactor = np.maximum(runStyleScore, 0.3 * energyScore)
-    return (
-        0.30 * locomotionScore + 0.30 * runBand + 0.25 * runStyleScore + 0.15 * energyScore
-    ).astype(np.float32)
+    return np.clip(score, 0.0, 1.0).astype(np.float32)
 
 
-def _score_jump(featureSource):
+def _score_jump(featureSource, params=None):
+    params = CoerceLabelAutoParams(params)
     frameCount = int(featureSource["frame_count"])
     if frameCount == 0:
         return np.zeros((0,), dtype=np.float32)
 
     bodyHeight = max(float(featureSource.get("body_height", 1.0)), 1e-3)
+    locomotionFeatures = _get_locomotion_features(featureSource, params)
     contactFraction = np.asarray(featureSource["contact_fraction"], dtype=np.float32)
     localFlightRatio = np.asarray(featureSource.get("local_flight_ratio", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
     verticalSpeed = np.asarray(featureSource["root_vertical_speed"], dtype=np.float32)
@@ -1088,45 +1190,50 @@ def _score_jump(featureSource):
     vyUpScore = np.clip(verticalSpeed / max(0.50 * bodyHeight, 1e-6), 0.0, 1.0)
     vyDownScore = np.clip(np.abs(verticalSpeed) / max(0.80 * bodyHeight, 1e-6), 0.0, 1.0)
     liftScore = np.clip((hipsY - standingHeight) / max(0.15 * bodyHeight, 1e-6), 0.0, 1.0)
-    verticalScore = np.maximum(vyUpScore, np.maximum(vyDownScore * 0.4, liftScore))
+    verticalScore = np.maximum(vyUpScore, np.maximum(vyDownScore * 0.55, liftScore))
+    verticalGate = np.maximum(vyUpScore, np.maximum(liftScore, vyDownScore * 0.35))
 
     fastRunPenalty = np.where(
-        (speed >= RUN_SPEED_THRESHOLD + 0.30) & (liftScore < 0.30) & (vyUpScore < 0.50),
+        (speed >= float(params.run_speed_threshold)) & (liftScore < 0.30) & (vyUpScore < 0.50),
         0.15,
         1.0,
     )
+    runLikePenalty = 1.0 - 0.65 * (
+        _smoothstep_score(speed, 0.90 * float(locomotionFeatures["run_threshold"]), float(locomotionFeatures["run_threshold"]) + 0.15) *
+        _smoothstep_score(localFlightRatio, float(params.run_flight_threshold), float(params.run_flight_threshold) + 0.18) *
+        (1.0 - verticalGate)
+    )
 
-    rawScore = 0.50 * airborneScore + 0.35 * verticalScore + 0.15 * flightScore
-    return (rawScore * fastRunPenalty).astype(np.float32)
+    rawScore = 0.35 * airborneScore + 0.50 * verticalScore + 0.15 * flightScore
+    return np.clip(rawScore * (0.20 + 0.80 * verticalGate) * fastRunPenalty * runLikePenalty, 0.0, 1.0).astype(np.float32)
 
 
-def _score_crouch(featureSource):
+def _score_crouch(featureSource, params=None, crouchPostureScore=None):
+    params = CoerceLabelAutoParams(params)
     frameCount = int(featureSource["frame_count"])
     if frameCount == 0:
         return np.zeros((0,), dtype=np.float32)
 
+    locomotionFeatures = _get_locomotion_features(featureSource, params)
     contactFraction = np.asarray(featureSource["contact_fraction"], dtype=np.float32)
     localFlightRatio = np.asarray(featureSource.get("local_flight_ratio", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
     verticalSpeed = np.asarray(featureSource["root_vertical_speed"], dtype=np.float32)
     speed = np.asarray(featureSource["root_horizontal_speed"], dtype=np.float32)
-    torsoHeight = np.asarray(featureSource.get("torso_height", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
-    standingTorsoHeight = max(float(featureSource.get("standing_torso_height", 1.0)), 1e-3)
-    kneeFlexion = np.asarray(featureSource.get("knee_flexion", np.zeros((frameCount,), dtype=np.float32)), dtype=np.float32)
+    if crouchPostureScore is None:
+        crouchPostureScore = _score_crouch_posture(featureSource, params)
 
-    torsoRatio = torsoHeight / max(standingTorsoHeight, 1e-6)
+    groundedScore = _smoothstep_score(contactFraction, 0.15, 0.50)
+    stableScore = 1.0 - _smoothstep_score(np.abs(verticalSpeed), 0.15, 0.45)
+    lowFlightScore = 1.0 - _smoothstep_score(localFlightRatio, 0.02, 0.10)
+    speedGate = 1.0 - _smoothstep_score(speed, 0.75 * float(params.crouch_speed_max), float(params.crouch_speed_max))
+    steppingPenalty = 1.0 - 0.45 * (
+        _smoothstep_score(speed, 0.35, 0.90) *
+        _smoothstep_score(locomotionFeatures["step_signal"], 0.12, 0.30) *
+        (1.0 - np.clip(crouchPostureScore, 0.0, 1.0))
+    )
 
-    deepTorsoScore = np.clip((0.83 - torsoRatio) / 0.13, 0.0, 1.0)
-    locoTorsoScore = np.clip((0.90 - torsoRatio) / 0.08, 0.0, 1.0)
-    kneeScore = np.clip((kneeFlexion - 40.0) / 35.0, 0.0, 1.0)
-    torsoGate = np.maximum(deepTorsoScore, locoTorsoScore * kneeScore)
-
-    groundedScore = np.clip(contactFraction / 0.50, 0.0, 1.0)
-    stableScore = 1.0 - np.clip(np.abs(verticalSpeed) / 0.30, 0.0, 1.0)
-    lowFlightScore = 1.0 - np.clip(localFlightRatio / 0.08, 0.0, 1.0)
-    speedGate = 1.0 - np.clip(speed / 1.30, 0.0, 1.0)
-
-    crouchBase = 0.35 * groundedScore + 0.25 * stableScore + 0.20 * lowFlightScore
-    return (torsoGate * speedGate * crouchBase).astype(np.float32)
+    crouchBase = 0.40 * groundedScore + 0.30 * stableScore + 0.30 * lowFlightScore
+    return np.clip(crouchPostureScore * speedGate * crouchBase * steppingPenalty, 0.0, 1.0).astype(np.float32)
 
 
 def _build_leading_calibration_mask(featureSource, postSeconds=DEFAULT_LEADING_CALIBRATION_SETTLE_SECONDS):
@@ -1185,10 +1292,12 @@ def BuildAutoLabelsFromMotion(featureSource, params=None):
         return labels, scores, confidence
 
     idleScore = _score_idle(featureSource)
-    walkScore = _score_walk(featureSource)
-    runScore = _score_run(featureSource)
-    jumpScore = _score_jump(featureSource)
-    crouchScore = _score_crouch(featureSource)
+    crouchPostureScore = _score_crouch_posture(featureSource, params)
+    featureSource["crouch_posture_score"] = crouchPostureScore.astype(np.float32)
+    walkScore = _score_walk(featureSource, params=params, crouchPostureScore=crouchPostureScore)
+    runScore = _score_run(featureSource, params=params, crouchPostureScore=crouchPostureScore)
+    jumpScore = _score_jump(featureSource, params=params)
+    crouchScore = _score_crouch(featureSource, params=params, crouchPostureScore=crouchPostureScore)
     leadingCalibrationMask = _build_leading_calibration_mask(featureSource)
     featureSource["leading_calibration_mask"] = leadingCalibrationMask.astype(np.float32)
 
